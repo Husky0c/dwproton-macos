@@ -1,24 +1,49 @@
-# DWProton macOS x64
+# DWProton macOS
 
-面向 Intel macOS 的实验性 DWProton Wine 移植。当前版本基于 DWProton 11.0-17 使用的 Wine 源码，在 1401 NVIDIA 黑苹果上开发。 [DWProton](https://dawn.wine/dawn-winery/dwproton) · [Wine 源码提交](https://dawn.wine/dawn-winery/wine-dwproton/commit/a45ed99f3b9898eaec1303458bf40d082a6565b7)
+DWProton macOS 是面向 Intel macOS 的 Wine 运行时，基于 DWProton 11.0-17 使用的 Wine 源码。可在 Heroic 中作为自定义运行时启动 32 位和 64 位 Windows 程序。
 
-Experimental Intel macOS port of the Wine component shipped with DWProton 11.0-17. Heroic runs it as a custom Wine runner.
+## 系统要求
+
+- Intel x86_64 处理器。
+- macOS 部署目标为 14.0。
+- Vulkan 程序依赖 1401 NVIDIA NVK 驱动提供的 `/Library/GPUBundles/nvmtl/libvulkan.1.dylib`。[NVK 驱动文档](https://github.com/HighDelay/nvidia-macos-driver-nvk)
 
 ## 安装
 
-1. 从 [Releases](https://github.com/Husky0c/dwproton-macos/releases) 下载 `dwproton-macos-11.0-17.1-x86_64.tar.gz` 和 `SHA256SUMS`。解压后会得到 `DWProton-macOS-x64.app`。
-2. 将 `.app` 放进 `~/Library/Application Support/heroic/tools/wine/`，重新打开 Heroic。
-3. 在游戏设置中选择 **DWProton macOS x64 - 11.0**。首次测试可以为游戏创建独立的 Wine 容器。
+1. 下载 `dwproton-macos-11.0-17.1-x86_64.tar.gz` 和 `SHA256SUMS`。[下载预览版](https://github.com/Husky0c/dwproton-macos/releases/tag/v11.0-17-macos.1)
+2. 在下载目录校验并解压。
 
-命令行入口是 `DWProton-macOS-x64.app/Contents/Resources/wine/bin/wine`。运行 `wine --version` 可以检查路径和架构。
+   ```sh
+   shasum -a 256 -c --ignore-missing SHA256SUMS &&
+     tar -xzf dwproton-macos-11.0-17.1-x86_64.tar.gz
+   ```
+
+3. 将解压得到的 `DWProton-macOS-x64.app` 放入 `~/Library/Application Support/heroic/tools/wine/`。
+4. 重启 Heroic，在游戏设置的 Wine 版本中选择 **DWProton macOS x64 - 11.0**。
+
+安装后可从终端检查运行时版本。
+
+```sh
+"$HOME/Library/Application Support/heroic/tools/wine/DWProton-macOS-x64.app/Contents/Resources/wine/bin/wine" --version
+```
 
 ## 兼容性
 
-- 本机原始构建的验证环境为 Intel Core i5-12600KF、RTX 5060、macOS 26.7.3 和 1401 NVIDIA Vulkan。Apple Silicon 和其他显卡尚未验证。
-- Vulkan 后端使用 1401 系统里的 `/Library/GPUBundles/nvmtl/libvulkan.1.dylib`。显卡驱动需单独安装。 [1401 NVK 源码与说明](https://github.com/HighDelay/nvidia-macos-driver-nvk)
-- NIKKE 在本机用官方启动器进入了大厅。该验证还使用了 NIKKE 容器里单独配置的 Heroic DXVK。标题背景视频仍有解码错误。
-- 发布包只包含 Wine 运行时及其开源依赖。Heroic、DXVK、游戏文件和容器需各自准备。
+验证环境为 macOS 26.7.3、Intel Core i5-12600KF 和 NVIDIA GeForce RTX 5060。主分支构建通过了 32 位和 64 位 Windows 程序的基础运行测试。Apple Silicon 和其他显卡的兼容性待验证。
 
-## 源码
+NIKKE 已在开发构建中通过官方启动器进入大厅。测试时在游戏的 Wine 容器中单独配置了 DXVK。标题背景视频仍有解码错误。
 
-仓库根目录包含 Wine 源码。macOS 移植和应用命名修复都记录在 Git 中，菜单栏和 Dock 的实现位于 `dlls/winemac.drv/`。克隆仓库后可以用根目录下的构建脚本编译。各个 Release 提供与其二进制对应的源码和依赖源码。 [构建说明](BUILD.md) · [第三方组件](THIRD_PARTY.md)
+## 从源码构建
+
+```sh
+git clone https://github.com/Husky0c/dwproton-macos.git
+cd dwproton-macos
+```
+
+仓库包含完整的 Wine 源码。构建文档列出了 Intel macOS 所需的工具链、依赖和命令。[构建指南](BUILD.md)
+
+预览版的 Release 附有对应的源码包。当前源码基于 Dawn Winery 的 Wine 提交 `a45ed99`。[DWProton](https://dawn.wine/dawn-winery/dwproton) · [上游 Wine 源码](https://dawn.wine/dawn-winery/wine-dwproton/commit/a45ed99f3b9898eaec1303458bf40d082a6565b7)
+
+## 许可证
+
+Wine 及本项目的移植改动采用 LGPL-2.1-or-later。随运行时分发的第三方组件保留各自的许可证。[Wine 许可证](COPYING.LIB) · [第三方组件](THIRD_PARTY.md)
