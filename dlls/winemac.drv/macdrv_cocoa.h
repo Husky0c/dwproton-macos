@@ -199,7 +199,7 @@ static inline CGPoint cgpoint_win_from_mac(CGPoint point)
     return point;
 }
 
-extern int macdrv_start_cocoa_app(unsigned long long tickcount);
+extern int macdrv_start_cocoa_app(unsigned long long tickcount, CFStringRef app_name);
 extern void macdrv_window_rejected_focus(const struct macdrv_event *event);
 extern void macdrv_beep(void);
 extern void macdrv_set_application_icon(CFArrayRef images);

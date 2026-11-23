@@ -27,6 +27,7 @@
 #include "macdrv_res.h"
 #include "shellapi.h"
 #include "unixlib.h"
+#include "winver.h"
 #include "wine/debug.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
@@ -373,9 +374,48 @@ cleanup:
 }
 
 
+static void get_app_name(struct init_params *params)
+{
+    static const WCHAR * const fields[] = {L"FileDescription", L"ProductName"};
+    static const WCHAR version_key[] = L"VS_VERSION_INFO";
+    HRSRC resource = FindResourceW(NULL, MAKEINTRESOURCEW(VS_VERSION_INFO), (LPCWSTR)RT_VERSION);
+    const WORD *translations;
+    const WCHAR *name;
+    const WORD *version;
+    HGLOBAL data;
+    WCHAR query[48];
+    UINT size, bytes, i, j, len;
+
+    if (!resource || !(data = LoadResource(NULL, resource)) || !(version = LockResource(data)))
+        return;
+    size = SizeofResource(NULL, resource);
+    /* VerQueryValueW expects a Win32 version resource here. */
+    if (size < 3 * sizeof(WORD) + sizeof(version_key) || version[0] > size ||
+        memcmp(version + 3, version_key, sizeof(version_key)))
+        return;
+    if (!VerQueryValueW(version, L"\\VarFileInfo\\Translation", (void **)&translations, &bytes))
+        return;
+
+    for (i = 0; i < ARRAYSIZE(fields); i++)
+    {
+        for (j = 0; j < bytes / (2 * sizeof(WORD)); j++)
+        {
+            swprintf(query, ARRAYSIZE(query), L"\\StringFileInfo\\%04x%04x\\%ls",
+                     translations[2 * j], translations[2 * j + 1], fields[i]);
+            if (VerQueryValueW(version, query, (void **)&name, &len) && len > 1 && *name)
+            {
+                params->app_name = (UINT_PTR)name;
+                params->app_name_len = len - 1;
+                return;
+            }
+        }
+    }
+}
+
+
 static BOOL process_attach(void)
 {
-    struct init_params params;
+    struct init_params params = {0};
 
     struct localized_string *str;
     struct localized_string strings[] = {
@@ -403,6 +443,7 @@ static BOOL process_attach(void)
     params.strings = strings;
     params.app_icon_callback = (UINT_PTR)macdrv_app_icon;
     params.app_quit_request_callback = (UINT_PTR)macdrv_app_quit_request;
+    get_app_name(&params);
 
     if (MACDRV_CALL(init, &params)) return FALSE;
 

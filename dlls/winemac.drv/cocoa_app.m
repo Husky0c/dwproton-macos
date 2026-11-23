@@ -22,6 +22,7 @@
 #import "cocoa_cursorclipping.h"
 #import "cocoa_event.h"
 #import "cocoa_window.h"
+#include <dlfcn.h>
 
 #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
 
@@ -230,6 +231,20 @@ static NSString* WineLocalizedString(unsigned int stringID)
             NSString* title;
             NSMenuItem* item;
 
+            bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
+            if ([bundleName length])
+            {
+                /* Publish the new name to Launch Services before the running app appears in the Dock. */
+                CFTypeRef (*get_asn)(void) = dlsym(RTLD_DEFAULT, "_LSGetCurrentApplicationASN");
+                OSStatus (*set_info)(int, CFTypeRef, CFStringRef, CFTypeRef, CFDictionaryRef *) =
+                    dlsym(RTLD_DEFAULT, "_LSSetApplicationInformationItem");
+                const CFStringRef* display_name_key = dlsym(RTLD_DEFAULT, "_kLSDisplayNameKey");
+                CFTypeRef asn;
+
+                if (set_info && display_name_key && *display_name_key && get_asn && (asn = get_asn()))
+                    set_info(-2, asn, *display_name_key, (CFStringRef)bundleName, NULL);
+            }
+
             [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
 
             if (activateIfTransformed)
@@ -244,8 +259,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             mainMenu = [[[NSMenu alloc] init] autorelease];
 
             // Application menu
-            submenu = [[[NSMenu alloc] initWithTitle:WineLocalizedString(STRING_MENU_WINE)] autorelease];
-            bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
+            submenu = [[[NSMenu alloc] initWithTitle:bundleName ?: WineLocalizedString(STRING_MENU_WINE)] autorelease];
 
             if ([bundleName length])
                 title = [NSString stringWithFormat:WineLocalizedString(STRING_MENU_ITEM_HIDE_APPNAME), bundleName];
@@ -271,7 +285,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             item = [submenu addItemWithTitle:title action:@selector(terminate:) keyEquivalent:@"q"];
             [item setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagOption];
             item = [[[NSMenuItem alloc] init] autorelease];
-            [item setTitle:WineLocalizedString(STRING_MENU_WINE)];
+            [item setTitle:[submenu title]];
             [item setSubmenu:submenu];
             [mainMenu addItem:item];
 

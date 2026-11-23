@@ -41,6 +41,7 @@ struct cocoa_app_startup_info {
     NSConditionLock*    lock;
     unsigned long long  tickcount;
     uint64_t            uptime_ns;
+    CFStringRef         app_name;
     BOOL                success;
 };
 
@@ -70,6 +71,15 @@ static void run_cocoa_app(void* info)
     {
         if (!NSApp)
         {
+            if (startup_info->app_name)
+            {
+                /* AppKit reads the main bundle name when it creates the application. */
+                NSMutableDictionary* info = (NSMutableDictionary*)CFBundleGetInfoDictionary(CFBundleGetMainBundle());
+                NSString* name = (NSString*)startup_info->app_name;
+                [info setObject:name forKey:(NSString*)kCFBundleNameKey];
+                [info setObject:name forKey:@"CFBundleDisplayName"];
+                [[NSProcessInfo processInfo] setProcessName:name];
+            }
             [WineApplication sharedApplication];
             created_app = TRUE;
         }
@@ -108,7 +118,7 @@ static void run_cocoa_app(void* info)
  *
  * Returns 0 on success, non-zero on failure.
  */
-int macdrv_start_cocoa_app(unsigned long long tickcount)
+int macdrv_start_cocoa_app(unsigned long long tickcount, CFStringRef app_name)
 {
 @autoreleasepool
 {
@@ -128,6 +138,7 @@ int macdrv_start_cocoa_app(unsigned long long tickcount)
 
     startup_info.lock = [[NSConditionLock alloc] initWithCondition:COCOA_APP_NOT_RUNNING];
     startup_info.tickcount = tickcount;
+    startup_info.app_name = app_name;
     startup_info.success = FALSE;
 
     mach_timebase_info(&mach_timebase);

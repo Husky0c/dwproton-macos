@@ -426,8 +426,12 @@ static void load_strings(struct localized_string *str)
 static NTSTATUS macdrv_init(void *arg)
 {
     struct init_params *params = arg;
+    const WCHAR *name = param_ptr(params->app_name), *p;
+    UINT name_len = params->app_name_len;
     SessionAttributeBits attributes;
+    CFStringRef app_name;
     OSStatus status;
+    int ret;
 
     app_icon_callback = params->app_icon_callback;
     app_quit_request_callback = params->app_quit_request_callback;
@@ -440,8 +444,20 @@ static NTSTATUS macdrv_init(void *arg)
     setup_options();
     load_strings(params->strings);
 
+    if (!name_len)
+    {
+        name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
+        if ((p = wcsrchr(name, '/'))) name = p + 1;
+        if ((p = wcsrchr(name, '\\'))) name = p + 1;
+        p = wcsrchr(name, '.');
+        name_len = p && p > name ? p - name : lstrlenW(name);
+    }
+
     macdrv_err_on = ERR_ON(macdrv);
-    if (macdrv_start_cocoa_app(NtGetTickCount()))
+    app_name = name_len ? CFStringCreateWithCharacters(NULL, name, name_len) : NULL;
+    ret = macdrv_start_cocoa_app(NtGetTickCount(), app_name);
+    if (app_name) CFRelease(app_name);
+    if (ret)
     {
         ERR("Failed to start Cocoa app main loop\n");
         return STATUS_UNSUCCESSFUL;
@@ -620,12 +636,16 @@ static NTSTATUS wow64_init(void *arg)
         ULONG strings;
         UINT64 app_icon_callback;
         UINT64 app_quit_request_callback;
+        UINT64 app_name;
+        UINT app_name_len;
     } *params32 = arg;
     struct init_params params;
 
     params.strings = UlongToPtr(params32->strings);
     params.app_icon_callback = params32->app_icon_callback;
     params.app_quit_request_callback = params32->app_quit_request_callback;
+    params.app_name = params32->app_name;
+    params.app_name_len = params32->app_name_len;
     return macdrv_init(&params);
 }
 
