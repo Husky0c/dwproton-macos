@@ -1,0 +1,7 @@
+/.build/
+/out/
+/prefix/
+/wine-src/
+/dependencies/
+*.log
+.DS_Store
