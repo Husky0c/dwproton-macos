@@ -43,6 +43,19 @@ extern ULONG_PTR get_icon_param( HICON handle );
 extern ULONG_PTR set_icon_param( HICON handle, const struct free_icon_params *params );
 
 /* dce.c */
+#define WM_WINE_FLUSH_SHARED_SURFACE 0x80000012
+
+struct shared_surface_update
+{
+    BITMAPINFO info;
+    RECT bounds;
+    ULONG section;
+    ULONG window;
+};
+
+extern struct window_surface *create_shared_surface( HWND window, HWND parent, const RECT *visible,
+                                                     struct window_surface *previous );
+extern BOOL flush_shared_surface( HWND parent, const struct shared_surface_update *update );
 extern struct window_surface dummy_surface;
 extern void create_window_surface( HWND hwnd, BOOL create_layered, const RECT *surface_rect, UINT monitor_dpi,
                                    struct window_surface **window_surface );

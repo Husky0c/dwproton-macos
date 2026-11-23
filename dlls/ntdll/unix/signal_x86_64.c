@@ -2881,6 +2881,10 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         /* Interrupted during syscall entry. Defer the USR1. */
         TRACE_(seh)( "deferring SIGUSR1 during syscall entry (rip=0x%lx)\n", (long)RIP_sig(ucontext));
         amd64_thread_data()->sigusr1_pending = 1;
+#ifdef __APPLE__
+        /* Syscall entry still needs the Windows GS base on the user stack. */
+        leave_handler( ucontext );
+#endif
         return;
     }
     else if (RIP_sig(ucontext) >= (ULONG_PTR)__wine_syscall_dispatcher_return_ptr &&
@@ -2985,6 +2989,10 @@ static void sigsys_handler( int signal, siginfo_t *siginfo, void *sigcontext )
         frame->restore_flags |= CONTEXT_CONTROL;
     }
     RIP_sig(ucontext) = (ULONG64)__wine_syscall_dispatcher_prolog_end_ptr;
+#ifdef __APPLE__
+    /* The dispatcher loads the Windows TEB from GS before switching stacks. */
+    leave_handler( ucontext );
+#endif
 }
 #endif
 
@@ -3214,10 +3222,12 @@ void signal_init_process(void)
     exit(1);
 }
 
+#ifdef __linux__
 void set_thread_teb( TEB *teb )
 {
     arch_prctl( ARCH_SET_GS, teb );
 }
+#endif
 
 /***********************************************************************
  *           init_syscall_frame

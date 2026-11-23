@@ -2154,6 +2154,20 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
 
     if (!is_child) rects->visible = get_visible_rect( hwnd, shaped, style, ex_style, rects );
     if (!get_surface_rect( &rects->visible, surface_rect )) needs_surface = FALSE;
+#ifdef __APPLE__
+    if (is_child && !(swp_flags & SWP_HIDEWINDOW) && ((swp_flags & SWP_SHOWWINDOW) || (style & WS_VISIBLE)))
+    {
+        DWORD parent_process;
+
+        if (get_window_thread( parent, &parent_process ) && parent_process != GetCurrentProcessId())
+        {
+            struct window_surface *previous = window_surface_get( hwnd );
+            new_surface = create_shared_surface( hwnd, parent, &rects->visible, previous );
+            if (previous) window_surface_release( previous );
+            if (new_surface) return new_surface;
+        }
+    }
+#endif
     if (!get_default_window_surface( hwnd, surface_rect, &new_surface )) return NULL;
 
     is_layered = new_surface && new_surface->alpha_mask;

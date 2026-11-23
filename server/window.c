@@ -1268,7 +1268,11 @@ static void set_region_visible_rect( struct region *region, struct window *win )
 /* get the top-level window to clip against for a given window */
 static inline struct window *get_top_clipping_window( struct window *win )
 {
-    while (!(win->paint_flags & PAINT_HAS_SURFACE) && win->parent && !is_desktop_window(win->parent))
+    while ((!(win->paint_flags & PAINT_HAS_SURFACE)
+#ifdef __APPLE__
+            || !win->thread || win->thread->process != current->process
+#endif
+           ) && win->parent && !is_desktop_window(win->parent))
         win = win->parent;
     return win;
 }

@@ -50,6 +50,175 @@ static struct list dce_list = LIST_INIT(dce_list);
 
 #define DCE_CACHE_SIZE 64
 
+/* Shared child-window DIB, adapted from CrossOver 26.3 Wine. */
+struct shm_window_surface
+{
+    struct window_surface header;
+    HANDLE      parent_process;
+    HANDLE      section;
+    HWND        parent;
+    BITMAPINFO  info;
+};
+
+static struct shm_window_surface *get_shm_surface( struct window_surface *surface )
+{
+    return CONTAINING_RECORD(surface, struct shm_window_surface, header);
+}
+
+static void shm_surface_set_clip( struct window_surface *window_surface, const RECT *rects, UINT count )
+{
+    /* The destination DC clips against the current parent window. */
+}
+
+static BOOL shm_surface_flush( struct window_surface *window_surface, const RECT *rect, const RECT *dirty,
+                               const BITMAPINFO *color_info, const void *color_bits, BOOL shape_changed,
+                               const BITMAPINFO *shape_info, const void *shape_bits )
+{
+    struct shm_window_surface *surface = get_shm_surface( window_surface );
+    struct shared_surface_update params;
+
+    TRACE("%p\n", surface);
+
+    params.section = HandleToLong( surface->section );
+    params.window = HandleToLong( surface->header.hwnd );
+    params.info = surface->info;
+    params.bounds = *dirty;
+
+    return send_message_timeout( surface->parent, WM_WINE_FLUSH_SHARED_SURFACE, 0, (LPARAM)&params,
+                                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 500, FALSE );
+}
+
+static void shm_surface_destroy( struct window_surface *window_surface )
+{
+    struct shm_window_surface *surface = get_shm_surface( window_surface );
+    HANDLE local;
+
+    if (surface->section &&
+        !NtDuplicateObject( surface->parent_process, surface->section, GetCurrentProcess(),
+                            &local, 0, 0, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS ))
+        NtClose( local );
+    if (surface->parent_process) NtClose( surface->parent_process );
+}
+
+static const struct window_surface_funcs shm_surface_funcs =
+{
+    shm_surface_set_clip,
+    shm_surface_flush,
+    shm_surface_destroy,
+};
+
+
+BOOL is_shared_window_surface( const struct window_surface *surface )
+{
+    return surface->funcs == &shm_surface_funcs;
+}
+
+struct window_surface *create_shared_surface( HWND window, HWND parent, const RECT *visible,
+                                               struct window_surface *previous )
+{
+    OBJECT_ATTRIBUTES attr = { .Length = sizeof(attr) };
+    struct shm_window_surface *surface;
+    LARGE_INTEGER size;
+    BITMAPINFO info = {0};
+    CLIENT_ID cid = {0};
+    HANDLE section, process;
+    HBITMAP bitmap;
+    DWORD pid;
+    RECT rect;
+
+    SetRect( &rect, 0, 0, visible->right - visible->left, visible->bottom - visible->top );
+    if (IsRectEmpty( &rect ) || rect.right > 16384 || rect.bottom > 16384 ||
+        !get_window_thread( parent, &pid )) return NULL;
+    size.QuadPart = 4 * (LONGLONG)rect.right * rect.bottom;
+    if (size.QuadPart > 128 * 1024 * 1024) return NULL;
+
+    if (previous && previous->funcs == &shm_surface_funcs && EqualRect( &rect, &previous->rect ) &&
+        get_shm_surface( previous )->parent == parent)
+    {
+        window_surface_add_ref( previous );
+        return previous;
+    }
+
+    info.bmiHeader.biSize = sizeof(info.bmiHeader);
+    info.bmiHeader.biWidth = rect.right;
+    info.bmiHeader.biHeight = -rect.bottom;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biSizeImage = size.QuadPart;
+
+    cid.UniqueProcess = ULongToHandle( pid );
+    if (NtOpenProcess( &process, PROCESS_DUP_HANDLE, &attr, &cid )) return NULL;
+    if (NtCreateSection( &section, SECTION_MAP_READ | SECTION_MAP_WRITE, NULL, &size,
+                         PAGE_READWRITE, SEC_COMMIT, NULL ))
+    {
+        NtClose( process );
+        return NULL;
+    }
+
+    bitmap = NtGdiCreateDIBSection( 0, section, 0, &info, DIB_RGB_COLORS, 0, 0, 0, NULL );
+    surface = bitmap ? (struct shm_window_surface *)window_surface_create(
+        sizeof(*surface), &shm_surface_funcs, window, &rect, &info, bitmap ) : NULL;
+    if (!surface)
+    {
+        if (bitmap) NtGdiDeleteObjectApp( bitmap );
+        NtClose( section );
+        NtClose( process );
+        return NULL;
+    }
+
+    surface->info = info;
+    surface->parent = parent;
+    surface->parent_process = process;
+    if (NtDuplicateObject( GetCurrentProcess(), section, process, &surface->section, SECTION_MAP_READ, 0, 0 ))
+    {
+        window_surface_release( &surface->header );
+        surface = NULL;
+    }
+
+    NtClose( section );
+    return surface ? &surface->header : NULL;
+}
+
+BOOL flush_shared_surface( HWND parent, const struct shared_surface_update *update )
+{
+    const BITMAPINFOHEADER *info = &update->info.bmiHeader;
+    const RECT *dirty = &update->bounds;
+    HWND window = wine_server_ptr_handle( update->window );
+    SIZE_T view_size = 0;
+    void *bits = NULL;
+    LONG height;
+    HDC dc;
+    BOOL ok = FALSE;
+
+    if (NtUserGetAncestor( window, GA_PARENT ) != parent ||
+        info->biSize != sizeof(*info) || info->biWidth <= 0 || info->biWidth > 16384 ||
+        info->biHeight >= 0 || info->biHeight < -16384 || info->biPlanes != 1 ||
+        info->biBitCount != 32 || info->biCompression != BI_RGB || info->biClrUsed)
+        return FALSE;
+
+    height = -info->biHeight;
+    if (IsRectEmpty( dirty ) || dirty->left < 0 || dirty->top < 0 ||
+        dirty->right > info->biWidth || dirty->bottom > height)
+        return FALSE;
+
+    if (NtMapViewOfSection( ULongToHandle( update->section ), GetCurrentProcess(), &bits,
+                            0, 0, NULL, &view_size, ViewUnmap, 0, PAGE_READONLY ))
+        return FALSE;
+
+    if (4 * (SIZE_T)info->biWidth * height <= view_size &&
+        (dc = NtUserGetDCEx( window, 0, DCX_CACHE | DCX_CLIPSIBLINGS | DCX_WINDOW )))
+    {
+        ok = !!NtGdiSetDIBitsToDeviceInternal( dc, dirty->left, dirty->top,
+                                             dirty->right - dirty->left, dirty->bottom - dirty->top,
+                                             dirty->left, height - dirty->bottom, 0, height,
+                                             bits, &update->info, DIB_RGB_COLORS, 0, 0, FALSE, NULL );
+        NtUserReleaseDC( window, dc );
+    }
+
+    NtUnmapViewOfSection( GetCurrentProcess(), bits );
+    return ok;
+}
+
 static struct list window_surfaces = LIST_INIT( window_surfaces );
 static pthread_mutex_t surfaces_lock = PTHREAD_MUTEX_INITIALIZER;
 

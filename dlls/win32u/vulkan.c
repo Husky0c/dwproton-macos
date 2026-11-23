@@ -25,6 +25,7 @@
 #include "config.h"
 
 #include <math.h>
+#include <inttypes.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -677,15 +678,20 @@ signal_op_complete:
 
 static void *signaller_worker( void *arg )
 {
-    int unix_tid = gettid();
+    uint64_t unix_tid = (uintptr_t)pthread_self();
     struct vulkan_device *device = arg;
     struct semaphore *sem;
     VkSemaphoreWaitInfo wait_info = { 0 };
     uint32_t wait_alloc_count = 0;
     VkResult res;
 
+#if defined(__linux__)
+    unix_tid = gettid();
+#elif defined(__APPLE__)
+    pthread_threadid_np( NULL, &unix_tid );
+#endif
     if (debug_level)
-        fprintf( stderr, "[%d] msg:winevulkan:signaller_worker started.\n", unix_tid );
+        fprintf( stderr, "[%" PRIu64 "] msg:winevulkan:signaller_worker started.\n", unix_tid );
 
     wait_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
     wait_info.flags = VK_SEMAPHORE_WAIT_ANY_BIT;
@@ -739,7 +745,7 @@ static void *signaller_worker( void *arg )
     free( (void *)wait_info.pSemaphores );
     free( (void *)wait_info.pValues );
     if (debug_level)
-        fprintf( stderr, "[%d] msg:winevulkan:signaller_worker exiting.\n", unix_tid );
+        fprintf( stderr, "[%" PRIu64 "] msg:winevulkan:signaller_worker exiting.\n", unix_tid );
 
     return NULL;
 }

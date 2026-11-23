@@ -3460,7 +3460,7 @@ static void output_source_one_arch( struct makefile *make, struct incl_file *sou
     obj2[ sizeof( obj2 ) - 1] = '\0';
     replace_char( obj2, '-', '_' );
     replace_char( obj2, '.', '_' );
-    output_filename( arch_make_variable( strmake( "%s_CFLAGS", basename( obj2 ) ), arch ));
+    output_filename( arch_make_variable( strmake( "%s_CFLAGS", get_basename( obj2 ) ), arch ));
     output( "\n" );
 
     if (make->testdll && strendswith( source->name, ".c" ) &&
@@ -3933,7 +3933,7 @@ static void output_programs( struct makefile *make )
         strncpy( program2, program, sizeof( program2 ) );
         program2[ sizeof( program2 ) - 1] = '\0';
         replace_char( program2, '-', '_' );
-        output_filename( arch_make_variable( strmake( "%s_LDFLAGS", basename( program2 ) ), arch ));
+        output_filename( arch_make_variable( strmake( "%s_LDFLAGS", get_basename( program2 ) ), arch ));
         output( "\n" );
         strarray_add( &make->all_targets[arch], program );
 

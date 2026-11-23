@@ -972,6 +972,14 @@ static BOOL windrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
     dst_dev = GET_NEXT_PHYSDEV( dst_dev, pStretchBlt );
     ret = dst_dev->funcs->pStretchBlt( dst_dev, dst, src_dev, src, rop );
     unlock_surfaces( dst_physdev, src_physdev );
+
+    /* A full memory bitmap copy into a shared window is a completed frame.
+     * Present it now even if the compositor thread never pumps window messages. */
+    if (ret && !dst_physdev->lock_count && !src_physdev && rop == SRCCOPY &&
+        is_shared_window_surface( dst_physdev->surface ) &&
+        dst->width >= dst_physdev->surface->rect.right - dst_physdev->surface->rect.left &&
+        dst->height >= dst_physdev->surface->rect.bottom - dst_physdev->surface->rect.top)
+        window_surface_flush( dst_physdev->surface );
     return ret;
 }
 

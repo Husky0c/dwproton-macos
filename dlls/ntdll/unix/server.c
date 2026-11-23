@@ -1720,7 +1720,9 @@ size_t server_init_process(void)
 
     reply_pipe = init_thread_pipe();
 
+#ifdef linux
     fill_cpu_override();
+#endif
     cpu_override = get_cpu_topology_override();
     close( reply_pipe );
 

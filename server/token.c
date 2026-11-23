@@ -223,6 +223,7 @@ const struct sid *security_unix_uid_to_sid( uid_t uid )
 
 void init_user_sid(void)
 {
+#ifdef __linux__
     char machine_id[17];
     uint64_t id;
     size_t n;
@@ -248,6 +249,7 @@ void init_user_sid(void)
     local_user_sid.sub_auth[1] = id >> 32;
     local_user_sid.sub_auth[2] = id & 0xffffffff;
     local_user_sid.sub_auth[3] = getuid();
+#endif
 }
 
 static int acl_is_valid( const struct acl *acl, data_size_t size )

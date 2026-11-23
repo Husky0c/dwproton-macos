@@ -840,6 +840,7 @@ void init_shared_data_cpuinfo( KUSER_SHARED_DATA *data )
 
 #endif /* End architecture specific feature detection for CPUs */
 
+#ifdef linux
 static void fill_performance_core_info(void);
 static BOOL sysfs_parse_bitmap(const char *filename, ULONG_PTR *mask);
 
@@ -1049,6 +1050,7 @@ error:
     cpu_override.mapping.cpu_count = 0;
     ERR("Invalid WINE_CPU_TOPOLOGY string %s (%s).\n", debugstr_a(env_override), debugstr_a(s));
 }
+#endif
 
 struct cpu_topology_override *get_cpu_topology_override(void)
 {

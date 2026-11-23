@@ -893,6 +893,9 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
         memcpy( *buffer, &mcs, sizeof(mcs) );
         break;
     }
+    case WM_WINE_FLUSH_SHARED_SURFACE:
+        if (size < sizeof(struct shared_surface_update)) return FALSE;
+        break;
     case WM_WINE_SETWINDOWPOS:
     {
         WINDOWPOS wp;
@@ -1276,6 +1279,9 @@ static size_t pack_message( HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
         if ((wparam & 0x8000) && header) push_data( data, header, header->dbch_size );
         return 0;
     }
+    case WM_WINE_FLUSH_SHARED_SURFACE:
+        push_data( data, (const void *)lparam, sizeof(struct shared_surface_update) );
+        return 0;
     case WM_WINE_KEYBOARD_LL_HOOK:
     {
         struct hook_extra_info *h_extra = (struct hook_extra_info *)lparam;
@@ -2277,6 +2283,8 @@ static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPAR
     case WM_WINE_UPDATEWINDOWSTATE:
         update_window_state( hwnd );
         return 0;
+    case WM_WINE_FLUSH_SHARED_SURFACE:
+        return lparam && flush_shared_surface( hwnd, (const struct shared_surface_update *)lparam );
     case WM_WINE_UPDATE_WIN_CONTENTS:
     {
         RECT client;
