@@ -716,3 +716,344 @@ index 4e7ef3e..fea7e69 100644
          win = win->parent;
      return win;
  }
+diff --git a/dlls/winemac.drv/Makefile.in b/dlls/winemac.drv/Makefile.in
+index 621388f..14b4a41 100644
+--- a/dlls/winemac.drv/Makefile.in
++++ b/dlls/winemac.drv/Makefile.in
+@@ -1,6 +1,6 @@
+ MODULE    = winemac.drv
+ UNIXLIB   = winemac.so
+-IMPORTS   = uuid rpcrt4 user32 gdi32 win32u
++IMPORTS   = uuid rpcrt4 user32 gdi32 win32u kernelbase
+ DELAYIMPORTS = ole32 shell32 imm32
+ UNIX_LIBS    = \
+ 	-lwin32u \
+diff --git a/dlls/winemac.drv/cocoa_app.m b/dlls/winemac.drv/cocoa_app.m
+index 2a9dab2..a75d42f 100644
+--- a/dlls/winemac.drv/cocoa_app.m
++++ b/dlls/winemac.drv/cocoa_app.m
+@@ -22,6 +22,7 @@
+ #import "cocoa_cursorclipping.h"
+ #import "cocoa_event.h"
+ #import "cocoa_window.h"
++#include <dlfcn.h>
+ 
+ #pragma GCC diagnostic ignored "-Wdeclaration-after-statement"
+ 
+@@ -230,6 +231,20 @@ - (void) transformProcessToForeground:(BOOL)activateIfTransformed
+             NSString* title;
+             NSMenuItem* item;
+ 
++            bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
++            if ([bundleName length])
++            {
++                /* Publish the display name to Launch Services for the running application. */
++                CFTypeRef (*get_asn)(void) = dlsym(RTLD_DEFAULT, "_LSGetCurrentApplicationASN");
++                OSStatus (*set_info)(int, CFTypeRef, CFStringRef, CFTypeRef, CFDictionaryRef *) =
++                    dlsym(RTLD_DEFAULT, "_LSSetApplicationInformationItem");
++                const CFStringRef* display_name_key = dlsym(RTLD_DEFAULT, "_kLSDisplayNameKey");
++                CFTypeRef asn;
++
++                if (set_info && display_name_key && *display_name_key && get_asn && (asn = get_asn()))
++                    set_info(-2, asn, *display_name_key, (CFStringRef)bundleName, NULL);
++            }
++
+             [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+ 
+             if (activateIfTransformed)
+@@ -244,8 +259,7 @@ - (void) transformProcessToForeground:(BOOL)activateIfTransformed
+             mainMenu = [[[NSMenu alloc] init] autorelease];
+ 
+             // Application menu
+-            submenu = [[[NSMenu alloc] initWithTitle:WineLocalizedString(STRING_MENU_WINE)] autorelease];
+-            bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
++            submenu = [[[NSMenu alloc] initWithTitle:bundleName ?: WineLocalizedString(STRING_MENU_WINE)] autorelease];
+ 
+             if ([bundleName length])
+                 title = [NSString stringWithFormat:WineLocalizedString(STRING_MENU_ITEM_HIDE_APPNAME), bundleName];
+@@ -271,7 +285,7 @@ - (void) transformProcessToForeground:(BOOL)activateIfTransformed
+             item = [submenu addItemWithTitle:title action:@selector(terminate:) keyEquivalent:@"q"];
+             [item setKeyEquivalentModifierMask:NSEventModifierFlagCommand | NSEventModifierFlagOption];
+             item = [[[NSMenuItem alloc] init] autorelease];
+-            [item setTitle:WineLocalizedString(STRING_MENU_WINE)];
++            [item setTitle:[submenu title]];
+             [item setSubmenu:submenu];
+             [mainMenu addItem:item];
+ 
+diff --git a/dlls/winemac.drv/cocoa_main.m b/dlls/winemac.drv/cocoa_main.m
+index 8c9507a..0690ea4 100644
+--- a/dlls/winemac.drv/cocoa_main.m
++++ b/dlls/winemac.drv/cocoa_main.m
+@@ -19,6 +19,7 @@
+  */
+ 
+ #import <AppKit/AppKit.h>
++#include <dlfcn.h>
+ #include <mach/mach.h>
+ #include <mach/mach_time.h>
+ 
+@@ -41,10 +42,78 @@
+     NSConditionLock*    lock;
+     unsigned long long  tickcount;
+     uint64_t            uptime_ns;
++    CFStringRef         app_name;
+     BOOL                success;
+ };
+ 
+ 
++/***********************************************************************
++ *              set_dock_bundle
++ *
++ * The Dock labels a bundled app using its bundle URL. Launch Services'
++ * display name alone does not rename the Dock tile for an unbundled loader.
++ */
++static void set_dock_bundle(NSString* name)
++{
++    void (*set_cf_main_bundle)(CFBundleRef) = dlsym(RTLD_DEFAULT, "_CFBundleSetMainBundle");
++    void (*set_ns_main_bundle)(NSBundle*) = dlsym(RTLD_DEFAULT, "_NSSetMainBundle");
++    if (!set_cf_main_bundle || !set_ns_main_bundle) return;
++
++    NSBundle* loader = [NSBundle mainBundle];
++    NSString* executable = [loader executablePath];
++    NSFileManager* files = [NSFileManager defaultManager];
++    NSURL* caches = [[files URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask] firstObject];
++    if (!executable || !caches) return;
++
++    /* Separate launches from different runners and names that map to the same filename. */
++    NSString* identity = [NSString stringWithFormat:@"%lx.%lx", (unsigned long)[executable hash],
++                         (unsigned long)[name hash]];
++    NSString* filename = [[name componentsSeparatedByCharactersInSet:
++                           [NSCharacterSet characterSetWithCharactersInString:@"/:"]] componentsJoinedByString:@"∕"];
++    if ([filename length] > 60)
++    {
++        NSRange last = [filename rangeOfComposedCharacterSequenceAtIndex:60];
++        filename = [filename substringToIndex:last.location];
++    }
++    if (![filename length]) return;
++
++    NSURL* root = [caches URLByAppendingPathComponent:@"org.winehq.wine/Dock Applications" isDirectory:YES];
++    NSURL* directory = [root URLByAppendingPathComponent:identity isDirectory:YES];
++    NSURL* url = [directory URLByAppendingPathComponent:[filename stringByAppendingString:@".app"] isDirectory:YES];
++    NSURL* contents = [url URLByAppendingPathComponent:@"Contents" isDirectory:YES];
++    NSURL* macos = [contents URLByAppendingPathComponent:@"MacOS" isDirectory:YES];
++    if (![files createDirectoryAtURL:macos withIntermediateDirectories:YES
++                          attributes:@{NSFilePosixPermissions: @0700} error:nil]) return;
++
++    NSString* executable_name = [executable lastPathComponent];
++    NSURL* link = [macos URLByAppendingPathComponent:executable_name isDirectory:NO];
++    NSURL* target = [NSURL fileURLWithPath:executable];
++    if (![files createSymbolicLinkAtURL:link withDestinationURL:target error:nil] &&
++        ![[files destinationOfSymbolicLinkAtPath:[link path] error:nil] isEqualToString:executable])
++        return;
++
++    NSURL* plist = [contents URLByAppendingPathComponent:@"Info.plist" isDirectory:NO];
++    NSMutableDictionary* info = [[[loader infoDictionary] mutableCopy] autorelease];
++    if (!info) info = [NSMutableDictionary dictionary];
++    info[@"CFBundleExecutable"] = executable_name;
++    info[@"CFBundleIdentifier"] = [@"org.winehq.wine." stringByAppendingString:identity];
++    info[@"CFBundleName"] = name;
++    info[@"CFBundleDisplayName"] = name;
++    info[@"CFBundlePackageType"] = @"APPL";
++    if (![[NSDictionary dictionaryWithContentsOfURL:plist] isEqualToDictionary:info] &&
++        ![info writeToURL:plist atomically:YES]) return;
++
++    CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, (CFURLRef)url);
++    NSBundle* ns_bundle = [NSBundle bundleWithURL:url];
++    if (bundle && ns_bundle)
++    {
++        set_cf_main_bundle(bundle);
++        set_ns_main_bundle(ns_bundle);
++    }
++    if (bundle) CFRelease(bundle);
++}
++
++
+ /***********************************************************************
+  *              run_cocoa_app
+  *
+@@ -70,6 +139,16 @@ static void run_cocoa_app(void* info)
+     {
+         if (!NSApp)
+         {
++            if (startup_info->app_name)
++            {
++                /* AppKit reads the main bundle name when it creates the application. */
++                NSString* name = (NSString*)startup_info->app_name;
++                set_dock_bundle(name);
++                NSMutableDictionary* info = (NSMutableDictionary*)CFBundleGetInfoDictionary(CFBundleGetMainBundle());
++                [info setObject:name forKey:(NSString*)kCFBundleNameKey];
++                [info setObject:name forKey:@"CFBundleDisplayName"];
++                [[NSProcessInfo processInfo] setProcessName:name];
++            }
+             [WineApplication sharedApplication];
+             created_app = TRUE;
+         }
+@@ -108,7 +187,7 @@ static void run_cocoa_app(void* info)
+  *
+  * Returns 0 on success, non-zero on failure.
+  */
+-int macdrv_start_cocoa_app(unsigned long long tickcount)
++int macdrv_start_cocoa_app(unsigned long long tickcount, CFStringRef app_name)
+ {
+ @autoreleasepool
+ {
+@@ -128,6 +207,7 @@ int macdrv_start_cocoa_app(unsigned long long tickcount)
+ 
+     startup_info.lock = [[NSConditionLock alloc] initWithCondition:COCOA_APP_NOT_RUNNING];
+     startup_info.tickcount = tickcount;
++    startup_info.app_name = app_name;
+     startup_info.success = FALSE;
+ 
+     mach_timebase_info(&mach_timebase);
+diff --git a/dlls/winemac.drv/dllmain.c b/dlls/winemac.drv/dllmain.c
+index 7ece4dc..3cbfa33 100644
+--- a/dlls/winemac.drv/dllmain.c
++++ b/dlls/winemac.drv/dllmain.c
+@@ -27,6 +27,7 @@
+ #include "macdrv_res.h"
+ #include "shellapi.h"
+ #include "unixlib.h"
++#include "winver.h"
+ #include "wine/debug.h"
+ 
+ WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
+@@ -373,9 +374,48 @@ cleanup:
+ }
+ 
+ 
++static void get_app_name(struct init_params *params)
++{
++    static const WCHAR * const fields[] = {L"FileDescription", L"ProductName"};
++    static const WCHAR version_key[] = L"VS_VERSION_INFO";
++    HRSRC resource = FindResourceW(NULL, MAKEINTRESOURCEW(VS_VERSION_INFO), (LPCWSTR)RT_VERSION);
++    const WORD *translations;
++    const WCHAR *name;
++    const WORD *version;
++    HGLOBAL data;
++    WCHAR query[48];
++    UINT size, bytes, i, j, len;
++
++    if (!resource || !(data = LoadResource(NULL, resource)) || !(version = LockResource(data)))
++        return;
++    size = SizeofResource(NULL, resource);
++    /* VerQueryValueW expects a Win32 version resource here. */
++    if (size < 3 * sizeof(WORD) + sizeof(version_key) || version[0] > size ||
++        memcmp(version + 3, version_key, sizeof(version_key)))
++        return;
++    if (!VerQueryValueW(version, L"\\VarFileInfo\\Translation", (void **)&translations, &bytes))
++        return;
++
++    for (i = 0; i < ARRAYSIZE(fields); i++)
++    {
++        for (j = 0; j < bytes / (2 * sizeof(WORD)); j++)
++        {
++            swprintf(query, ARRAYSIZE(query), L"\\StringFileInfo\\%04x%04x\\%ls",
++                     translations[2 * j], translations[2 * j + 1], fields[i]);
++            if (VerQueryValueW(version, query, (void **)&name, &len) && len > 1 && *name)
++            {
++                params->app_name = (UINT_PTR)name;
++                params->app_name_len = len - 1;
++                return;
++            }
++        }
++    }
++}
++
++
+ static BOOL process_attach(void)
+ {
+-    struct init_params params;
++    struct init_params params = {0};
+ 
+     struct localized_string *str;
+     struct localized_string strings[] = {
+@@ -403,6 +443,7 @@ static BOOL process_attach(void)
+     params.strings = strings;
+     params.app_icon_callback = (UINT_PTR)macdrv_app_icon;
+     params.app_quit_request_callback = (UINT_PTR)macdrv_app_quit_request;
++    get_app_name(&params);
+ 
+     if (MACDRV_CALL(init, &params)) return FALSE;
+ 
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+index 6a6b697..c42fdac 100644
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -199,7 +199,7 @@ static inline CGPoint cgpoint_win_from_mac(CGPoint point)
+     return point;
+ }
+ 
+-extern int macdrv_start_cocoa_app(unsigned long long tickcount);
++extern int macdrv_start_cocoa_app(unsigned long long tickcount, CFStringRef app_name);
+ extern void macdrv_window_rejected_focus(const struct macdrv_event *event);
+ extern void macdrv_beep(void);
+ extern void macdrv_set_application_icon(CFArrayRef images);
+diff --git a/dlls/winemac.drv/macdrv_main.c b/dlls/winemac.drv/macdrv_main.c
+index ed91383..b61ba31 100644
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -426,8 +426,12 @@ static void load_strings(struct localized_string *str)
+ static NTSTATUS macdrv_init(void *arg)
+ {
+     struct init_params *params = arg;
++    const WCHAR *name = param_ptr(params->app_name), *p;
++    UINT name_len = params->app_name_len;
+     SessionAttributeBits attributes;
++    CFStringRef app_name;
+     OSStatus status;
++    int ret;
+ 
+     app_icon_callback = params->app_icon_callback;
+     app_quit_request_callback = params->app_quit_request_callback;
+@@ -440,8 +444,20 @@ static NTSTATUS macdrv_init(void *arg)
+     setup_options();
+     load_strings(params->strings);
+ 
++    if (!name_len)
++    {
++        name = NtCurrentTeb()->Peb->ProcessParameters->ImagePathName.Buffer;
++        if ((p = wcsrchr(name, '/'))) name = p + 1;
++        if ((p = wcsrchr(name, '\\'))) name = p + 1;
++        p = wcsrchr(name, '.');
++        name_len = p && p > name ? p - name : lstrlenW(name);
++    }
++
+     macdrv_err_on = ERR_ON(macdrv);
+-    if (macdrv_start_cocoa_app(NtGetTickCount()))
++    app_name = name_len ? CFStringCreateWithCharacters(NULL, name, name_len) : NULL;
++    ret = macdrv_start_cocoa_app(NtGetTickCount(), app_name);
++    if (app_name) CFRelease(app_name);
++    if (ret)
+     {
+         ERR("Failed to start Cocoa app main loop\n");
+         return STATUS_UNSUCCESSFUL;
+@@ -620,12 +636,16 @@ static NTSTATUS wow64_init(void *arg)
+         ULONG strings;
+         UINT64 app_icon_callback;
+         UINT64 app_quit_request_callback;
++        UINT64 app_name;
++        UINT app_name_len;
+     } *params32 = arg;
+     struct init_params params;
+ 
+     params.strings = UlongToPtr(params32->strings);
+     params.app_icon_callback = params32->app_icon_callback;
+     params.app_quit_request_callback = params32->app_quit_request_callback;
++    params.app_name = params32->app_name;
++    params.app_name_len = params32->app_name_len;
+     return macdrv_init(&params);
+ }
+ 
+diff --git a/dlls/winemac.drv/unixlib.h b/dlls/winemac.drv/unixlib.h
+index d39b3ea..e2d3118 100644
+--- a/dlls/winemac.drv/unixlib.h
++++ b/dlls/winemac.drv/unixlib.h
+@@ -41,6 +41,8 @@
+     struct localized_string *strings;
+     UINT64 app_icon_callback;
+     UINT64 app_quit_request_callback;
++    UINT64 app_name;
++    UINT app_name_len;
+ };
+ 
+ /* macdrv_quit_result params */
