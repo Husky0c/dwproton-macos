@@ -1,171 +1,24 @@
-## INTRODUCTION
+# DWProton macOS x64
 
-Wine is a program which allows running Microsoft Windows programs
-(including DOS, Windows 3.x, Win32, and Win64 executables) on Unix.
-It consists of a program loader which loads and executes a Microsoft
-Windows binary, and a library (called Winelib) that implements Windows
-API calls using their Unix, X11 or Mac equivalents.  The library may also
-be used for porting Windows code into native Unix executables.
+面向 Intel macOS 的实验性 DWProton Wine 移植。当前版本基于 DWProton 11.0-17 使用的 Wine 源码，在 1401 NVIDIA 黑苹果上开发。 [DWProton](https://dawn.wine/dawn-winery/dwproton) · [Wine 源码提交](https://dawn.wine/dawn-winery/wine-dwproton/commit/a45ed99f3b9898eaec1303458bf40d082a6565b7)
 
-Wine is free software, released under the GNU LGPL; see the file
-LICENSE for the details.
+Experimental Intel macOS port of the Wine component shipped with DWProton 11.0-17. Heroic runs it as a custom Wine runner.
 
+## 安装
 
-## QUICK START
+1. 从 [Releases](https://github.com/Husky0c/dwproton-macos/releases) 下载 `dwproton-macos-11.0-17.1-x86_64.tar.gz` 和 `SHA256SUMS`。解压后会得到 `DWProton-macOS-x64.app`。
+2. 将 `.app` 放进 `~/Library/Application Support/heroic/tools/wine/`，重新打开 Heroic。
+3. 在游戏设置中选择 **DWProton macOS x64 - 11.0**。首次测试可以为游戏创建独立的 Wine 容器。
 
-From the top-level directory of the Wine source (which contains this file),
-run:
+命令行入口是 `DWProton-macOS-x64.app/Contents/Resources/wine/bin/wine`。运行 `wine --version` 可以检查路径和架构。
 
-```
-./configure
-make
-```
+## 兼容性
 
-Then either install Wine:
+- 本机原始构建的验证环境为 Intel Core i5-12600KF、RTX 5060、macOS 26.7.3 和 1401 NVIDIA Vulkan。Apple Silicon 和其他显卡尚未验证。
+- Vulkan 后端使用 1401 系统里的 `/Library/GPUBundles/nvmtl/libvulkan.1.dylib`。显卡驱动需单独安装。 [1401 NVK 源码与说明](https://github.com/HighDelay/nvidia-macos-driver-nvk)
+- NIKKE 在本机用官方启动器进入了大厅。该验证还使用了 NIKKE 容器里单独配置的 Heroic DXVK。标题背景视频仍有解码错误。
+- 发布包只包含 Wine 运行时及其开源依赖。Heroic、DXVK、游戏文件和容器需各自准备。
 
-```
-make install
-```
+## 源码
 
-Or run Wine directly from the build directory:
-
-```
-./wine notepad
-```
-
-Run programs as `wine program`. For more information and problem
-resolution, read the rest of this file, the Wine man page, and
-especially the wealth of information found at https://www.winehq.org.
-
-
-## REQUIREMENTS
-
-To compile and run Wine, you must have one of the following:
-
-- Linux version 2.6.22 or later
-- FreeBSD 12.4 or later
-- Solaris x86 9 or later
-- NetBSD-current
-- macOS 10.12 or later
-
-As Wine requires kernel-level thread support to run, only the operating
-systems mentioned above are supported.  Other operating systems which
-support kernel threads may be supported in the future.
-
-**FreeBSD info**:
-  See https://wiki.freebsd.org/Wine for more information.
-
-**Solaris info**:
-  You will most likely need to build Wine with the GNU toolchain
-  (gcc, gas, etc.). Warning : installing gas does *not* ensure that it
-  will be used by gcc. Recompiling gcc after installing gas or
-  symlinking cc, as and ld to the gnu tools is said to be necessary.
-
-**NetBSD info**:
-  Make sure you have the USER_LDT, SYSVSHM, SYSVSEM, and SYSVMSG options
-  turned on in your kernel.
-
-**macOS info**:
-  You need Xcode/Xcode Command Line Tools or Apple cctools.  The
-  minimum requirements for compiling Wine are clang 3.8 with the
-  MacOSX10.13.sdk and mingw-w64 v12 for 32-bit wine.  The
-  MacOSX10.14.sdk and later can build 64-bit wine.
-
-**Supported file systems**:
-  Wine should run on most file systems. A few compatibility problems
-  have also been reported using files accessed through Samba. Also,
-  NTFS does not provide all the file system features needed by some
-  applications.  Using a native Unix file system is recommended.
-
-**Basic requirements**:
-  You need to have the X11 development include files installed
-  (called xorg-dev in Debian and libX11-devel in Red Hat).
-  Of course you also need make (most likely GNU make).
-  You also need flex version 2.5.33 or later and bison.
-
-**Optional support libraries**:
-  Configure will display notices when optional libraries are not found
-  on your system. See https://gitlab.winehq.org/wine/wine/-/wikis/Building-Wine
-  for hints about the packages you should install. On 64-bit
-  platforms, you have to make sure to install the 32-bit versions of
-  these libraries.
-
-
-## COMPILATION
-
-To build Wine, do:
-
-```
-./configure
-make
-```
-
-This will build the program "wine" and numerous support libraries/binaries.
-The program "wine" will load and run Windows executables.
-The library "libwine" ("Winelib") can be used to compile and link
-Windows source code under Unix.
-
-To see compile configuration options, do `./configure --help`.
-
-For more information, see https://gitlab.winehq.org/wine/wine/-/wikis/Building-Wine
-
-
-## SETUP
-
-Once Wine has been built correctly, you can do `make install`; this
-will install the wine executable and libraries, the Wine man page, and
-other needed files.
-
-Don't forget to uninstall any conflicting previous Wine installation
-first.  Try either `dpkg -r wine` or `rpm -e wine` or `make uninstall`
-before installing.
-
-Once installed, you can run the `winecfg` configuration tool. See the
-Support area at https://www.winehq.org/ for configuration hints.
-
-
-## RUNNING PROGRAMS
-
-When invoking Wine, you may specify the entire path to the executable,
-or a filename only.
-
-For example, to run Notepad:
-
-```
-wine notepad            (using the search Path as specified in
-wine notepad.exe         the registry to locate the file)
-
-wine c:\\windows\\notepad.exe      (using DOS filename syntax)
-
-wine ~/.wine/drive_c/windows/notepad.exe  (using Unix filename syntax)
-
-wine notepad.exe readme.txt          (calling program with parameters)
-```
-
-Wine is not perfect, so some programs may crash. If that happens you
-will get a crash log that you should attach to your report when filing
-a bug.
-
-
-## GETTING MORE INFORMATION
-
-- **WWW**: A great deal of information about Wine is available from WineHQ at
-	https://www.winehq.org/ : various Wine Guides, application database,
-	bug tracking. This is probably the best starting point.
-
-- **FAQ**: The Wine FAQ is located at https://gitlab.winehq.org/wine/wine/-/wikis/FAQ
-
-- **Wiki**: The Wine Wiki is located at https://gitlab.winehq.org/wine/wine/-/wikis/
-
-- **Gitlab**: Wine development is hosted at https://gitlab.winehq.org
-
-- **Mailing lists**:
-	There are several mailing lists for Wine users and developers; see
-	https://gitlab.winehq.org/wine/wine/-/wikis/Forums for more
-	information.
-
-- **Bugs**: Report bugs to Wine Bugzilla at https://bugs.winehq.org
-	Please search the bugzilla database to check whether your
-	problem is already known or fixed before posting a bug report.
-
-- **IRC**: Online help is available at channel `#WineHQ` on irc.libera.chat.
+仓库根目录包含 Wine 源码。macOS 移植和应用命名修复都记录在 Git 中，菜单栏和 Dock 的实现位于 `dlls/winemac.drv/`。克隆仓库后可以用根目录下的构建脚本编译。各个 Release 提供与其二进制对应的源码和依赖源码。 [构建说明](BUILD.md) · [第三方组件](THIRD_PARTY.md)
