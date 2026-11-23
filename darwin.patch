@@ -1,0 +1,718 @@
+diff --git a/dlls/ntdll/unix/fsync.c b/dlls/ntdll/unix/fsync.c
+index 25d41ca..98e9673 100644
+--- a/dlls/ntdll/unix/fsync.c
++++ b/dlls/ntdll/unix/fsync.c
+@@ -141,15 +141,25 @@ static void simulate_sched_quantum(void)
+ static inline int futex_wait_multiple( const struct futex_waitv *futexes,
+         int count, const struct timespec64 *end, clockid_t clock_id )
+ {
++#ifdef __linux__
+    if (end)
+         return syscall( __NR_futex_waitv, futexes, count, 0, end, clock_id );
+    else
+         return syscall( __NR_futex_waitv, futexes, count, 0, NULL, 0 );
++#else
++    errno = ENOSYS;
++    return -1;
++#endif
+ }
+ 
+ static inline int futex_wake( int *addr, int val )
+ {
++#ifdef __linux__
+     return syscall( __NR_futex, addr, 1, val, NULL, 0, 0 );
++#else
++    errno = ENOSYS;
++    return -1;
++#endif
+ }
+ 
+ struct fsync
+@@ -455,13 +465,12 @@ void fsync_init( DWORD pid )
+     struct stat st;
+ 
+ 
+-    fsync_enabled = 1;
+-    syscall( __NR_futex_waitv, NULL, 0, 0, NULL, 0 );
+-    if (errno == ENOSYS || errno == EPERM)
++    if (futex_wait_multiple( NULL, 0, NULL, 0 ) == -1 && (errno == ENOSYS || errno == EPERM))
+     {
+         ERR("Server is running with WINEFSYNC but this process can't use __NR_futex_waitv.\n");
+         exit(1);
+     }
++    fsync_enabled = 1;
+ 
+     if (stat( config_dir, &st ) == -1)
+         ERR("Cannot stat %s\n", config_dir);
+diff --git a/dlls/ntdll/unix/loader.c b/dlls/ntdll/unix/loader.c
+index 6cf894f..f9deb02 100644
+--- a/dlls/ntdll/unix/loader.c
++++ b/dlls/ntdll/unix/loader.c
+@@ -38,7 +38,9 @@
+ #include <sys/mman.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
+-#include <malloc.h>
++#ifdef __GLIBC__
++# include <malloc.h>
++#endif
+ #include <dlfcn.h>
+ #ifdef HAVE_PWD_H
+ # include <pwd.h>
+@@ -2424,11 +2426,13 @@ static void start_main_thread(void)
+     init_cpu_info();
+     init_files();
+ 
+-#if defined(__x86_64__) || defined(__i386__)
++#if defined(__linux__) && (defined(__x86_64__) || defined(__i386__))
+     set_thread_teb( teb );
+ #endif
+ 
++#ifdef M_PERTURB
+     mallopt( M_PERTURB, 0xff );
++#endif
+     init_startup_info();
+     *(ULONG_PTR *)&peb->CloudFileFlags = get_image_address();
+     set_load_order_app_name( main_wargv[0] );
+@@ -2437,7 +2441,9 @@ static void start_main_thread(void)
+     load_ntdll();
+     load_wow64_ntdll( main_image_info.Machine );
+     load_apiset_dll();
++#ifdef M_PERTURB
+     mallopt( M_PERTURB, 0 );
++#endif
+     server_init_process_done();
+ }
+ 
+diff --git a/dlls/ntdll/unix/server.c b/dlls/ntdll/unix/server.c
+index 30c7895..ffdb176 100644
+--- a/dlls/ntdll/unix/server.c
++++ b/dlls/ntdll/unix/server.c
+@@ -1720,7 +1720,9 @@ size_t server_init_process(void)
+ 
+     reply_pipe = init_thread_pipe();
+ 
++#ifdef linux
+     fill_cpu_override();
++#endif
+     cpu_override = get_cpu_topology_override();
+     close( reply_pipe );
+ 
+diff --git a/dlls/ntdll/unix/signal_x86_64.c b/dlls/ntdll/unix/signal_x86_64.c
+index 06baa08..2e0c4e4 100644
+--- a/dlls/ntdll/unix/signal_x86_64.c
++++ b/dlls/ntdll/unix/signal_x86_64.c
+@@ -2881,6 +2881,10 @@ static void usr1_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         /* Interrupted during syscall entry. Defer the USR1. */
+         TRACE_(seh)( "deferring SIGUSR1 during syscall entry (rip=0x%lx)\n", (long)RIP_sig(ucontext));
+         amd64_thread_data()->sigusr1_pending = 1;
++#ifdef __APPLE__
++        /* Syscall entry still needs the Windows GS base on the user stack. */
++        leave_handler( ucontext );
++#endif
+         return;
+     }
+     else if (RIP_sig(ucontext) >= (ULONG_PTR)__wine_syscall_dispatcher_return_ptr &&
+@@ -2985,6 +2989,10 @@ static void sigsys_handler( int signal, siginfo_t *siginfo, void *sigcontext )
+         frame->restore_flags |= CONTEXT_CONTROL;
+     }
+     RIP_sig(ucontext) = (ULONG64)__wine_syscall_dispatcher_prolog_end_ptr;
++#ifdef __APPLE__
++    /* The dispatcher loads the Windows TEB from GS before switching stacks. */
++    leave_handler( ucontext );
++#endif
+ }
+ #endif
+ 
+@@ -3214,10 +3222,12 @@ void signal_init_process(void)
+     exit(1);
+ }
+ 
++#ifdef __linux__
+ void set_thread_teb( TEB *teb )
+ {
+     arch_prctl( ARCH_SET_GS, teb );
+ }
++#endif
+ 
+ /***********************************************************************
+  *           init_syscall_frame
+diff --git a/dlls/ntdll/unix/sync.c b/dlls/ntdll/unix/sync.c
+index f8d0a95..c3c1f1e 100644
+--- a/dlls/ntdll/unix/sync.c
++++ b/dlls/ntdll/unix/sync.c
+@@ -61,7 +61,9 @@
+ # include <sys/event.h>
+ #endif
+ 
++#ifdef __linux__
+ # include "ntsync_tmp.h"
++#endif
+ 
+ #include "ntstatus.h"
+ #define WIN32_NO_STATUS
+diff --git a/dlls/ntdll/unix/system.c b/dlls/ntdll/unix/system.c
+index a63a769..c576a2b 100644
+--- a/dlls/ntdll/unix/system.c
++++ b/dlls/ntdll/unix/system.c
+@@ -840,6 +840,7 @@ void init_shared_data_cpuinfo( KUSER_SHARED_DATA *data )
+ 
+ #endif /* End architecture specific feature detection for CPUs */
+ 
++#ifdef linux
+ static void fill_performance_core_info(void);
+ static BOOL sysfs_parse_bitmap(const char *filename, ULONG_PTR *mask);
+ 
+@@ -1049,6 +1050,7 @@ error:
+     cpu_override.mapping.cpu_count = 0;
+     ERR("Invalid WINE_CPU_TOPOLOGY string %s (%s).\n", debugstr_a(env_override), debugstr_a(s));
+ }
++#endif
+ 
+ struct cpu_topology_override *get_cpu_topology_override(void)
+ {
+diff --git a/dlls/win32u/opengl.c b/dlls/win32u/opengl.c
+index 1765387..8cda3f0 100644
+--- a/dlls/win32u/opengl.c
++++ b/dlls/win32u/opengl.c
+@@ -1730,6 +1730,24 @@ static void init_egl_platforms( struct opengl_funcs *funcs, const struct opengl_
+ 
+ #endif /* SONAME_LIBEGL */
+ 
++static BOOL needs_framebuffer_update( HWND hwnd, struct opengl_drawable *drawable )
++{
++#ifdef SONAME_LIBEGL
++    return drawable && (drawable->funcs == &framebuffer_surface_funcs) != needs_framebuffer_surface( hwnd );
++#else
++    return FALSE;
++#endif
++}
++
++static struct opengl_drawable *get_driver_drawable( struct opengl_drawable *drawable )
++{
++#ifdef SONAME_LIBEGL
++    if (drawable && drawable->funcs == &framebuffer_surface_funcs)
++        return framebuffer_from_opengl_drawable( drawable )->target;
++#endif
++    return drawable;
++}
++
+ static UINT read_drm_device_prop( const char *name, const char *prop )
+ {
+     UINT value = -1;
+@@ -2077,10 +2095,14 @@ static struct opengl_drawable *get_window_current_drawable( HWND hwnd )
+ 
+ static struct opengl_drawable *get_window_unused_drawable( HWND hwnd, int format )
+ {
+-    BOOL raw = needs_framebuffer_surface( hwnd );
+     struct opengl_drawable *drawable = NULL;
++    BOOL raw = FALSE;
+     WND *win;
+ 
++#ifdef SONAME_LIBEGL
++    raw = needs_framebuffer_surface( hwnd );
++#endif
++
+     if ((win = get_win_ptr( hwnd )) && win != WND_DESKTOP && win != WND_OTHER_PROCESS)
+     {
+         drawable = win->unused_drawable;
+@@ -2093,11 +2115,13 @@ static struct opengl_drawable *get_window_unused_drawable( HWND hwnd, int format
+         opengl_drawable_release( drawable );
+         drawable = NULL;
+     }
++#ifdef SONAME_LIBEGL
+     if (drawable && (drawable->funcs == &framebuffer_surface_funcs) != raw)
+     {
+         opengl_drawable_release( drawable );
+         drawable = NULL;
+     }
++#endif
+ 
+     /* No compatible window drawable found, try creating a new one. This is not what native
+      * is doing, it allows multiple contexts to be current on separate threads on the same
+@@ -2110,12 +2134,14 @@ static struct opengl_drawable *get_window_unused_drawable( HWND hwnd, int format
+         if (drawable && drawable->client) add_window_client_surface( hwnd, drawable->client );
+     }
+ 
++#ifdef SONAME_LIBEGL
+     if (drawable && drawable->funcs != &framebuffer_surface_funcs && raw)
+     {
+         struct opengl_drawable *surface = framebuffer_surface_create( format, drawable->client, drawable );
+         opengl_drawable_release( drawable );
+         drawable = surface;
+     }
++#endif
+ 
+     TRACE( "hwnd %p, drawable %s\n", hwnd, debugstr_opengl_drawable( drawable ) );
+     return drawable;
+@@ -2313,7 +2339,7 @@ static BOOL win32u_wglSetPixelFormatWINE( HDC hdc, int format )
+         opengl_drawable_release( drawable );
+         drawable = NULL;
+     }
+-    if (drawable && (drawable->funcs == &framebuffer_surface_funcs) != needs_framebuffer_surface( hwnd ))
++    if (needs_framebuffer_update( hwnd, drawable ))
+     {
+         opengl_drawable_release( drawable );
+         drawable = NULL;
+@@ -2371,11 +2397,6 @@ static BOOL context_unset_current( struct wgl_context *context )
+     return FALSE;
+ }
+ 
+-static BOOL needs_framebuffer_update( HWND hwnd, struct opengl_drawable *drawable )
+-{
+-    return drawable && (drawable->funcs == &framebuffer_surface_funcs) != needs_framebuffer_surface( hwnd );
+-}
+-
+ /* return an updated drawable, recreating one if the window drawables have been invalidated (mostly wineandroid) */
+ static struct opengl_drawable *get_updated_drawable( HDC hdc, int format, struct opengl_drawable *drawable,
+                                                      BOOL *updated )
+@@ -2443,8 +2464,8 @@ static BOOL context_sync_drawables( struct wgl_context *context, HDC draw_hdc, H
+         if (old_read != old_draw) opengl_drawable_set_context( old_draw, NULL );
+     }
+ 
+-    if ((draw = new_draw) && new_draw->funcs == &framebuffer_surface_funcs) draw = framebuffer_from_opengl_drawable( new_draw )->target;
+-    if ((read = new_read) && new_read->funcs == &framebuffer_surface_funcs) read = framebuffer_from_opengl_drawable( new_read )->target;
++    draw = get_driver_drawable( new_draw );
++    read = get_driver_drawable( new_read );
+ 
+     if (!ret && (ret = driver_funcs->p_make_current( draw, read, context->driver_private )))
+     {
+@@ -2538,8 +2559,8 @@ static void pop_internal_context( struct wgl_context *context )
+ 
+     TRACE( "context %p\n", context );
+ 
+-    if ((draw = context->draw) && draw->funcs == &framebuffer_surface_funcs) draw = framebuffer_from_opengl_drawable( draw )->target;
+-    if ((read = context->read) && read->funcs == &framebuffer_surface_funcs) read = framebuffer_from_opengl_drawable( read )->target;
++    draw = get_driver_drawable( context->draw );
++    read = get_driver_drawable( context->read );
+ 
+     driver_funcs->p_make_current( draw, read, context->driver_private );
+ }
+diff --git a/dlls/win32u/vulkan.c b/dlls/win32u/vulkan.c
+index 67ef1fd..b567175 100644
+--- a/dlls/win32u/vulkan.c
++++ b/dlls/win32u/vulkan.c
+@@ -25,6 +25,7 @@
+ #include "config.h"
+ 
+ #include <math.h>
++#include <inttypes.h>
+ #include <dlfcn.h>
+ #include <pthread.h>
+ #include <unistd.h>
+@@ -677,15 +678,20 @@ signal_op_complete:
+ 
+ static void *signaller_worker( void *arg )
+ {
+-    int unix_tid = gettid();
++    uint64_t unix_tid = (uintptr_t)pthread_self();
+     struct vulkan_device *device = arg;
+     struct semaphore *sem;
+     VkSemaphoreWaitInfo wait_info = { 0 };
+     uint32_t wait_alloc_count = 0;
+     VkResult res;
+ 
++#if defined(__linux__)
++    unix_tid = gettid();
++#elif defined(__APPLE__)
++    pthread_threadid_np( NULL, &unix_tid );
++#endif
+     if (debug_level)
+-        fprintf( stderr, "[%d] msg:winevulkan:signaller_worker started.\n", unix_tid );
++        fprintf( stderr, "[%" PRIu64 "] msg:winevulkan:signaller_worker started.\n", unix_tid );
+ 
+     wait_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO;
+     wait_info.flags = VK_SEMAPHORE_WAIT_ANY_BIT;
+@@ -739,7 +745,7 @@ static void *signaller_worker( void *arg )
+     free( (void *)wait_info.pSemaphores );
+     free( (void *)wait_info.pValues );
+     if (debug_level)
+-        fprintf( stderr, "[%d] msg:winevulkan:signaller_worker exiting.\n", unix_tid );
++        fprintf( stderr, "[%" PRIu64 "] msg:winevulkan:signaller_worker exiting.\n", unix_tid );
+ 
+     return NULL;
+ }
+diff --git a/server/fsync.c b/server/fsync.c
+index bd10ebd..a7d0a2e 100644
+--- a/server/fsync.c
++++ b/server/fsync.c
+@@ -310,7 +310,12 @@ int fsync_grab_shm_idx( unsigned int shm_idx )
+ 
+ static inline int futex_wake( int *addr, int val )
+ {
++#ifdef __linux__
+     return syscall( __NR_futex, addr, 1, val, NULL, 0, 0 );
++#else
++    errno = ENOSYS;
++    return -1;
++#endif
+ }
+ 
+ /* shm layout for events or event-like objects. */
+diff --git a/server/inproc_sync.c b/server/inproc_sync.c
+index a7020ef..938111b 100644
+--- a/server/inproc_sync.c
++++ b/server/inproc_sync.c
+@@ -36,7 +36,9 @@
+ 
+ #include "fsync.h"
+ 
+-#include "ntsync_tmp.h"
++#ifdef __linux__
++# include "ntsync_tmp.h"
++#endif
+ 
+ #ifdef NTSYNC_IOC_EVENT_READ
+ 
+diff --git a/server/token.c b/server/token.c
+index 7d8983f..47b0088 100644
+--- a/server/token.c
++++ b/server/token.c
+@@ -223,6 +223,7 @@ const struct sid *security_unix_uid_to_sid( uid_t uid )
+ 
+ void init_user_sid(void)
+ {
++#ifdef __linux__
+     char machine_id[17];
+     uint64_t id;
+     size_t n;
+@@ -248,6 +249,7 @@ void init_user_sid(void)
+     local_user_sid.sub_auth[1] = id >> 32;
+     local_user_sid.sub_auth[2] = id & 0xffffffff;
+     local_user_sid.sub_auth[3] = getuid();
++#endif
+ }
+ 
+ static int acl_is_valid( const struct acl *acl, data_size_t size )
+diff --git a/tools/makedep.c b/tools/makedep.c
+index 56c918c..9df2486 100644
+--- a/tools/makedep.c
++++ b/tools/makedep.c
+@@ -3460,7 +3460,7 @@ static void output_source_one_arch( struct makefile *make, struct incl_file *sou
+     obj2[ sizeof( obj2 ) - 1] = '\0';
+     replace_char( obj2, '-', '_' );
+     replace_char( obj2, '.', '_' );
+-    output_filename( arch_make_variable( strmake( "%s_CFLAGS", basename( obj2 ) ), arch ));
++    output_filename( arch_make_variable( strmake( "%s_CFLAGS", get_basename( obj2 ) ), arch ));
+     output( "\n" );
+ 
+     if (make->testdll && strendswith( source->name, ".c" ) &&
+@@ -3933,7 +3933,7 @@ static void output_programs( struct makefile *make )
+         strncpy( program2, program, sizeof( program2 ) );
+         program2[ sizeof( program2 ) - 1] = '\0';
+         replace_char( program2, '-', '_' );
+-        output_filename( arch_make_variable( strmake( "%s_LDFLAGS", basename( program2 ) ), arch ));
++        output_filename( arch_make_variable( strmake( "%s_LDFLAGS", get_basename( program2 ) ), arch ));
+         output( "\n" );
+         strarray_add( &make->all_targets[arch], program );
+ 
+diff --git a/dlls/win32u/dce.c b/dlls/win32u/dce.c
+index eccbcca..483a044 100644
+--- a/dlls/win32u/dce.c
++++ b/dlls/win32u/dce.c
+@@ -50,6 +50,175 @@ static struct list dce_list = LIST_INIT(dce_list);
+ 
+ #define DCE_CACHE_SIZE 64
+ 
++/* Shared child-window DIB, adapted from CrossOver 26.3 Wine. */
++struct shm_window_surface
++{
++    struct window_surface header;
++    HANDLE      parent_process;
++    HANDLE      section;
++    HWND        parent;
++    BITMAPINFO  info;
++};
++
++static struct shm_window_surface *get_shm_surface( struct window_surface *surface )
++{
++    return CONTAINING_RECORD(surface, struct shm_window_surface, header);
++}
++
++static void shm_surface_set_clip( struct window_surface *window_surface, const RECT *rects, UINT count )
++{
++    /* The destination DC clips against the current parent window. */
++}
++
++static BOOL shm_surface_flush( struct window_surface *window_surface, const RECT *rect, const RECT *dirty,
++                               const BITMAPINFO *color_info, const void *color_bits, BOOL shape_changed,
++                               const BITMAPINFO *shape_info, const void *shape_bits )
++{
++    struct shm_window_surface *surface = get_shm_surface( window_surface );
++    struct shared_surface_update params;
++
++    TRACE("%p\n", surface);
++
++    params.section = HandleToLong( surface->section );
++    params.window = HandleToLong( surface->header.hwnd );
++    params.info = surface->info;
++    params.bounds = *dirty;
++
++    return send_message_timeout( surface->parent, WM_WINE_FLUSH_SHARED_SURFACE, 0, (LPARAM)&params,
++                                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 500, FALSE );
++}
++
++static void shm_surface_destroy( struct window_surface *window_surface )
++{
++    struct shm_window_surface *surface = get_shm_surface( window_surface );
++    HANDLE local;
++
++    if (surface->section &&
++        !NtDuplicateObject( surface->parent_process, surface->section, GetCurrentProcess(),
++                            &local, 0, 0, DUPLICATE_CLOSE_SOURCE | DUPLICATE_SAME_ACCESS ))
++        NtClose( local );
++    if (surface->parent_process) NtClose( surface->parent_process );
++}
++
++static const struct window_surface_funcs shm_surface_funcs =
++{
++    shm_surface_set_clip,
++    shm_surface_flush,
++    shm_surface_destroy,
++};
++
++
++BOOL is_shared_window_surface( const struct window_surface *surface )
++{
++    return surface->funcs == &shm_surface_funcs;
++}
++
++struct window_surface *create_shared_surface( HWND window, HWND parent, const RECT *visible,
++                                               struct window_surface *previous )
++{
++    OBJECT_ATTRIBUTES attr = { .Length = sizeof(attr) };
++    struct shm_window_surface *surface;
++    LARGE_INTEGER size;
++    BITMAPINFO info = {0};
++    CLIENT_ID cid = {0};
++    HANDLE section, process;
++    HBITMAP bitmap;
++    DWORD pid;
++    RECT rect;
++
++    SetRect( &rect, 0, 0, visible->right - visible->left, visible->bottom - visible->top );
++    if (IsRectEmpty( &rect ) || rect.right > 16384 || rect.bottom > 16384 ||
++        !get_window_thread( parent, &pid )) return NULL;
++    size.QuadPart = 4 * (LONGLONG)rect.right * rect.bottom;
++    if (size.QuadPart > 128 * 1024 * 1024) return NULL;
++
++    if (previous && previous->funcs == &shm_surface_funcs && EqualRect( &rect, &previous->rect ) &&
++        get_shm_surface( previous )->parent == parent)
++    {
++        window_surface_add_ref( previous );
++        return previous;
++    }
++
++    info.bmiHeader.biSize = sizeof(info.bmiHeader);
++    info.bmiHeader.biWidth = rect.right;
++    info.bmiHeader.biHeight = -rect.bottom;
++    info.bmiHeader.biPlanes = 1;
++    info.bmiHeader.biBitCount = 32;
++    info.bmiHeader.biSizeImage = size.QuadPart;
++
++    cid.UniqueProcess = ULongToHandle( pid );
++    if (NtOpenProcess( &process, PROCESS_DUP_HANDLE, &attr, &cid )) return NULL;
++    if (NtCreateSection( &section, SECTION_MAP_READ | SECTION_MAP_WRITE, NULL, &size,
++                         PAGE_READWRITE, SEC_COMMIT, NULL ))
++    {
++        NtClose( process );
++        return NULL;
++    }
++
++    bitmap = NtGdiCreateDIBSection( 0, section, 0, &info, DIB_RGB_COLORS, 0, 0, 0, NULL );
++    surface = bitmap ? (struct shm_window_surface *)window_surface_create(
++        sizeof(*surface), &shm_surface_funcs, window, &rect, &info, bitmap ) : NULL;
++    if (!surface)
++    {
++        if (bitmap) NtGdiDeleteObjectApp( bitmap );
++        NtClose( section );
++        NtClose( process );
++        return NULL;
++    }
++
++    surface->info = info;
++    surface->parent = parent;
++    surface->parent_process = process;
++    if (NtDuplicateObject( GetCurrentProcess(), section, process, &surface->section, SECTION_MAP_READ, 0, 0 ))
++    {
++        window_surface_release( &surface->header );
++        surface = NULL;
++    }
++
++    NtClose( section );
++    return surface ? &surface->header : NULL;
++}
++
++BOOL flush_shared_surface( HWND parent, const struct shared_surface_update *update )
++{
++    const BITMAPINFOHEADER *info = &update->info.bmiHeader;
++    const RECT *dirty = &update->bounds;
++    HWND window = wine_server_ptr_handle( update->window );
++    SIZE_T view_size = 0;
++    void *bits = NULL;
++    LONG height;
++    HDC dc;
++    BOOL ok = FALSE;
++
++    if (NtUserGetAncestor( window, GA_PARENT ) != parent ||
++        info->biSize != sizeof(*info) || info->biWidth <= 0 || info->biWidth > 16384 ||
++        info->biHeight >= 0 || info->biHeight < -16384 || info->biPlanes != 1 ||
++        info->biBitCount != 32 || info->biCompression != BI_RGB || info->biClrUsed)
++        return FALSE;
++
++    height = -info->biHeight;
++    if (IsRectEmpty( dirty ) || dirty->left < 0 || dirty->top < 0 ||
++        dirty->right > info->biWidth || dirty->bottom > height)
++        return FALSE;
++
++    if (NtMapViewOfSection( ULongToHandle( update->section ), GetCurrentProcess(), &bits,
++                            0, 0, NULL, &view_size, ViewUnmap, 0, PAGE_READONLY ))
++        return FALSE;
++
++    if (4 * (SIZE_T)info->biWidth * height <= view_size &&
++        (dc = NtUserGetDCEx( window, 0, DCX_CACHE | DCX_CLIPSIBLINGS | DCX_WINDOW )))
++    {
++        ok = !!NtGdiSetDIBitsToDeviceInternal( dc, dirty->left, dirty->top,
++                                             dirty->right - dirty->left, dirty->bottom - dirty->top,
++                                             dirty->left, height - dirty->bottom, 0, height,
++                                             bits, &update->info, DIB_RGB_COLORS, 0, 0, FALSE, NULL );
++        NtUserReleaseDC( window, dc );
++    }
++
++    NtUnmapViewOfSection( GetCurrentProcess(), bits );
++    return ok;
++}
++
+ static struct list window_surfaces = LIST_INIT( window_surfaces );
+ static pthread_mutex_t surfaces_lock = PTHREAD_MUTEX_INITIALIZER;
+ 
+diff --git a/dlls/win32u/dibdrv/dc.c b/dlls/win32u/dibdrv/dc.c
+index d80173c..0a48f87 100644
+--- a/dlls/win32u/dibdrv/dc.c
++++ b/dlls/win32u/dibdrv/dc.c
+@@ -972,6 +972,14 @@ static BOOL windrv_StretchBlt( PHYSDEV dst_dev, struct bitblt_coords *dst,
+     dst_dev = GET_NEXT_PHYSDEV( dst_dev, pStretchBlt );
+     ret = dst_dev->funcs->pStretchBlt( dst_dev, dst, src_dev, src, rop );
+     unlock_surfaces( dst_physdev, src_physdev );
++
++    /* A full memory bitmap copy into a shared window is a completed frame.
++     * Present it now even if the compositor thread never pumps window messages. */
++    if (ret && !dst_physdev->lock_count && !src_physdev && rop == SRCCOPY &&
++        is_shared_window_surface( dst_physdev->surface ) &&
++        dst->width >= dst_physdev->surface->rect.right - dst_physdev->surface->rect.left &&
++        dst->height >= dst_physdev->surface->rect.bottom - dst_physdev->surface->rect.top)
++        window_surface_flush( dst_physdev->surface );
+     return ret;
+ }
+ 
+diff --git a/dlls/win32u/ntgdi_private.h b/dlls/win32u/ntgdi_private.h
+index 72b36ec..15a730c 100644
+--- a/dlls/win32u/ntgdi_private.h
++++ b/dlls/win32u/ntgdi_private.h
+@@ -226,6 +226,7 @@ extern UINT get_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries,
+ extern UINT set_dib_dc_color_table( HDC hdc, UINT startpos, UINT entries,
+                                     const RGBQUAD *colors );
+ extern void dibdrv_set_window_surface( DC *dc, struct window_surface *surface );
++extern BOOL is_shared_window_surface( const struct window_surface *surface );
+ 
+ /* driver.c */
+ extern const struct gdi_dc_funcs null_driver;
+diff --git a/dlls/win32u/message.c b/dlls/win32u/message.c
+index 138b553..5ef29d4 100644
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -893,6 +893,9 @@ static BOOL unpack_message( HWND hwnd, UINT message, WPARAM *wparam, LPARAM *lpa
+         memcpy( *buffer, &mcs, sizeof(mcs) );
+         break;
+     }
++    case WM_WINE_FLUSH_SHARED_SURFACE:
++        if (size < sizeof(struct shared_surface_update)) return FALSE;
++        break;
+     case WM_WINE_SETWINDOWPOS:
+     {
+         WINDOWPOS wp;
+@@ -1276,6 +1279,9 @@ static size_t pack_message( HWND hwnd, UINT message, WPARAM wparam, LPARAM lpara
+         if ((wparam & 0x8000) && header) push_data( data, header, header->dbch_size );
+         return 0;
+     }
++    case WM_WINE_FLUSH_SHARED_SURFACE:
++        push_data( data, (const void *)lparam, sizeof(struct shared_surface_update) );
++        return 0;
+     case WM_WINE_KEYBOARD_LL_HOOK:
+     {
+         struct hook_extra_info *h_extra = (struct hook_extra_info *)lparam;
+@@ -2277,6 +2283,8 @@ static LRESULT handle_internal_message( HWND hwnd, UINT msg, WPARAM wparam, LPAR
+     case WM_WINE_UPDATEWINDOWSTATE:
+         update_window_state( hwnd );
+         return 0;
++    case WM_WINE_FLUSH_SHARED_SURFACE:
++        return lparam && flush_shared_surface( hwnd, (const struct shared_surface_update *)lparam );
+     case WM_WINE_UPDATE_WIN_CONTENTS:
+     {
+         RECT client;
+diff --git a/dlls/win32u/win32u_private.h b/dlls/win32u/win32u_private.h
+index 31a0edb..ffb1f65 100644
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -43,6 +43,19 @@ extern ULONG_PTR get_icon_param( HICON handle );
+ extern ULONG_PTR set_icon_param( HICON handle, const struct free_icon_params *params );
+ 
+ /* dce.c */
++#define WM_WINE_FLUSH_SHARED_SURFACE 0x80000012
++
++struct shared_surface_update
++{
++    BITMAPINFO info;
++    RECT bounds;
++    ULONG section;
++    ULONG window;
++};
++
++extern struct window_surface *create_shared_surface( HWND window, HWND parent, const RECT *visible,
++                                                     struct window_surface *previous );
++extern BOOL flush_shared_surface( HWND parent, const struct shared_surface_update *update );
+ extern struct window_surface dummy_surface;
+ extern void create_window_surface( HWND hwnd, BOOL create_layered, const RECT *surface_rect, UINT monitor_dpi,
+                                    struct window_surface **window_surface );
+diff --git a/dlls/win32u/window.c b/dlls/win32u/window.c
+index 3ebf543..05b2fdc 100644
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -2154,6 +2154,20 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
+ 
+     if (!is_child) rects->visible = get_visible_rect( hwnd, shaped, style, ex_style, rects );
+     if (!get_surface_rect( &rects->visible, surface_rect )) needs_surface = FALSE;
++#ifdef __APPLE__
++    if (is_child && !(swp_flags & SWP_HIDEWINDOW) && ((swp_flags & SWP_SHOWWINDOW) || (style & WS_VISIBLE)))
++    {
++        DWORD parent_process;
++
++        if (get_window_thread( parent, &parent_process ) && parent_process != GetCurrentProcessId())
++        {
++            struct window_surface *previous = window_surface_get( hwnd );
++            new_surface = create_shared_surface( hwnd, parent, &rects->visible, previous );
++            if (previous) window_surface_release( previous );
++            if (new_surface) return new_surface;
++        }
++    }
++#endif
+     if (!get_default_window_surface( hwnd, surface_rect, &new_surface )) return NULL;
+ 
+     is_layered = new_surface && new_surface->alpha_mask;
+diff --git a/server/window.c b/server/window.c
+index 4e7ef3e..fea7e69 100644
+--- a/server/window.c
++++ b/server/window.c
+@@ -1268,7 +1268,11 @@ static void set_region_visible_rect( struct region *region, struct window *win )
+ /* get the top-level window to clip against for a given window */
+ static inline struct window *get_top_clipping_window( struct window *win )
+ {
+-    while (!(win->paint_flags & PAINT_HAS_SURFACE) && win->parent && !is_desktop_window(win->parent))
++    while ((!(win->paint_flags & PAINT_HAS_SURFACE)
++#ifdef __APPLE__
++            || !win->thread || win->thread->process != current->process
++#endif
++           ) && win->parent && !is_desktop_window(win->parent))
+         win = win->parent;
+     return win;
+ }
