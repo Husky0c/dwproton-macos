@@ -234,7 +234,7 @@ static NSString* WineLocalizedString(unsigned int stringID)
             bundleName = [[NSBundle mainBundle] objectForInfoDictionaryKey:(NSString*)kCFBundleNameKey];
             if ([bundleName length])
             {
-                /* Publish the new name to Launch Services before the running app appears in the Dock. */
+                /* Publish the display name to Launch Services for the running application. */
                 CFTypeRef (*get_asn)(void) = dlsym(RTLD_DEFAULT, "_LSGetCurrentApplicationASN");
                 OSStatus (*set_info)(int, CFTypeRef, CFStringRef, CFTypeRef, CFDictionaryRef *) =
                     dlsym(RTLD_DEFAULT, "_LSSetApplicationInformationItem");

@@ -19,6 +19,7 @@
  */
 
 #import <AppKit/AppKit.h>
+#include <dlfcn.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 
@@ -44,6 +45,73 @@ struct cocoa_app_startup_info {
     CFStringRef         app_name;
     BOOL                success;
 };
+
+
+/***********************************************************************
+ *              set_dock_bundle
+ *
+ * The Dock labels a bundled app using its bundle URL. Launch Services'
+ * display name alone does not rename the Dock tile for an unbundled loader.
+ */
+static void set_dock_bundle(NSString* name)
+{
+    void (*set_cf_main_bundle)(CFBundleRef) = dlsym(RTLD_DEFAULT, "_CFBundleSetMainBundle");
+    void (*set_ns_main_bundle)(NSBundle*) = dlsym(RTLD_DEFAULT, "_NSSetMainBundle");
+    if (!set_cf_main_bundle || !set_ns_main_bundle) return;
+
+    NSBundle* loader = [NSBundle mainBundle];
+    NSString* executable = [loader executablePath];
+    NSFileManager* files = [NSFileManager defaultManager];
+    NSURL* caches = [[files URLsForDirectory:NSCachesDirectory inDomains:NSUserDomainMask] firstObject];
+    if (!executable || !caches) return;
+
+    /* Separate launches from different runners and names that map to the same filename. */
+    NSString* identity = [NSString stringWithFormat:@"%lx.%lx", (unsigned long)[executable hash],
+                         (unsigned long)[name hash]];
+    NSString* filename = [[name componentsSeparatedByCharactersInSet:
+                           [NSCharacterSet characterSetWithCharactersInString:@"/:"]] componentsJoinedByString:@"∕"];
+    if ([filename length] > 60)
+    {
+        NSRange last = [filename rangeOfComposedCharacterSequenceAtIndex:60];
+        filename = [filename substringToIndex:last.location];
+    }
+    if (![filename length]) return;
+
+    NSURL* root = [caches URLByAppendingPathComponent:@"org.winehq.wine/Dock Applications" isDirectory:YES];
+    NSURL* directory = [root URLByAppendingPathComponent:identity isDirectory:YES];
+    NSURL* url = [directory URLByAppendingPathComponent:[filename stringByAppendingString:@".app"] isDirectory:YES];
+    NSURL* contents = [url URLByAppendingPathComponent:@"Contents" isDirectory:YES];
+    NSURL* macos = [contents URLByAppendingPathComponent:@"MacOS" isDirectory:YES];
+    if (![files createDirectoryAtURL:macos withIntermediateDirectories:YES
+                          attributes:@{NSFilePosixPermissions: @0700} error:nil]) return;
+
+    NSString* executable_name = [executable lastPathComponent];
+    NSURL* link = [macos URLByAppendingPathComponent:executable_name isDirectory:NO];
+    NSURL* target = [NSURL fileURLWithPath:executable];
+    if (![files createSymbolicLinkAtURL:link withDestinationURL:target error:nil] &&
+        ![[files destinationOfSymbolicLinkAtPath:[link path] error:nil] isEqualToString:executable])
+        return;
+
+    NSURL* plist = [contents URLByAppendingPathComponent:@"Info.plist" isDirectory:NO];
+    NSMutableDictionary* info = [[[loader infoDictionary] mutableCopy] autorelease];
+    if (!info) info = [NSMutableDictionary dictionary];
+    info[@"CFBundleExecutable"] = executable_name;
+    info[@"CFBundleIdentifier"] = [@"org.winehq.wine." stringByAppendingString:identity];
+    info[@"CFBundleName"] = name;
+    info[@"CFBundleDisplayName"] = name;
+    info[@"CFBundlePackageType"] = @"APPL";
+    if (![[NSDictionary dictionaryWithContentsOfURL:plist] isEqualToDictionary:info] &&
+        ![info writeToURL:plist atomically:YES]) return;
+
+    CFBundleRef bundle = CFBundleCreate(kCFAllocatorDefault, (CFURLRef)url);
+    NSBundle* ns_bundle = [NSBundle bundleWithURL:url];
+    if (bundle && ns_bundle)
+    {
+        set_cf_main_bundle(bundle);
+        set_ns_main_bundle(ns_bundle);
+    }
+    if (bundle) CFRelease(bundle);
+}
 
 
 /***********************************************************************
@@ -74,8 +142,9 @@ static void run_cocoa_app(void* info)
             if (startup_info->app_name)
             {
                 /* AppKit reads the main bundle name when it creates the application. */
-                NSMutableDictionary* info = (NSMutableDictionary*)CFBundleGetInfoDictionary(CFBundleGetMainBundle());
                 NSString* name = (NSString*)startup_info->app_name;
+                set_dock_bundle(name);
+                NSMutableDictionary* info = (NSMutableDictionary*)CFBundleGetInfoDictionary(CFBundleGetMainBundle());
                 [info setObject:name forKey:(NSString*)kCFBundleNameKey];
                 [info setObject:name forKey:@"CFBundleDisplayName"];
                 [[NSProcessInfo processInfo] setProcessName:name];
