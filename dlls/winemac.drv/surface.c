@@ -85,6 +85,49 @@ static BOOL macdrv_surface_flush(struct window_surface *window_surface, const RE
     CGImageAlphaInfo alpha_info = (window_surface->alpha_mask ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst);
     CGColorSpaceRef colorspace;
     CGImageRef image;
+    struct macdrv_win_data *data;
+
+    /* Core Animation reads the copied pixels on the main thread while GDI keeps drawing. */
+    if (!surface->window)
+    {
+        if ((data = get_win_data(window_surface->hwnd)))
+        {
+            int width = data->rects.visible.right - data->rects.visible.left;
+            int height = data->rects.visible.bottom - data->rects.visible.top;
+            int bitmap_height = abs(color_info->bmiHeader.biHeight);
+            CGDataProviderRef provider;
+            BYTE *dst;
+            int y;
+
+            if (data->remote_child && bitmap_height && color_info->bmiHeader.biWidth > 0)
+            {
+                size_t src_stride = color_info->bmiHeader.biSizeImage / bitmap_height;
+                size_t row_size;
+
+                width = min(max(width, 1), color_info->bmiHeader.biWidth);
+                height = min(max(height, 1), bitmap_height);
+                row_size = (size_t)width * 4;
+                if (row_size <= src_stride && (provider = data_provider_create(row_size * height, (void **)&dst)))
+                {
+                    for (y = 0; y < height; y++)
+                        memcpy(dst + y * row_size, (const BYTE *)color_bits + y * src_stride, row_size);
+                    colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+                    image = CGImageCreate(width, height, 8, 32, row_size, colorspace,
+                                          kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little, provider, NULL,
+                                          retina_on, kCGRenderingIntentDefault);
+                    CGColorSpaceRelease(colorspace);
+                    CGDataProviderRelease(provider);
+                    if (image)
+                    {
+                        macdrv_remote_child_set_image(data->remote_child, image);
+                        CGImageRelease(image);
+                    }
+                }
+            }
+            release_win_data(data);
+        }
+        return TRUE;
+    }
 
     colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
     image = CGImageCreate(color_info->bmiHeader.biWidth, abs(color_info->bmiHeader.biHeight), 8, 32,
@@ -220,6 +263,11 @@ BOOL macdrv_CreateWindowSurface(HWND hwnd, BOOL layered, const RECT *surface_rec
 
     if ((previous = *surface) && previous->funcs == &macdrv_surface_funcs) return TRUE;
     if (!(data = get_win_data(hwnd))) return TRUE; /* use default surface */
+    if (!data->cocoa_window && (!macdrv_is_remote_child(hwnd) || !macdrv_ensure_remote_child(data)))
+    {
+        release_win_data(data);
+        return TRUE;
+    }
     if (previous) window_surface_release(previous);
 
     if (layered)

@@ -33,6 +33,18 @@ DWProton macOS 是面向 Intel macOS 的 Wine 运行时，基于 DWProton 11.0-1
 
 NIKKE 已在开发构建中通过官方启动器进入大厅。测试时在游戏的 Wine 容器中单独配置了 DXVK。标题背景视频仍有解码错误。
 
+使用 WebView2 的应用可设置 `DWPROTON_WEBVIEW2_GDI=1`，启用 macOS 对跨进程 WebView2 软件绘制窗口的合成。`DWPROTON_WEBVIEW2_BROWSER_ARGS` 为 WebView2 浏览器主进程追加参数。
+
+鸣潮国服的验证配置使用关闭了 WPF 透明窗口的启动器 `3.1.0.1`，并在独立 Wine 容器中配置 WebView2 `158.0.4370.33`。将 `msedgewebview2.exe` 的兼容模式设为 Windows 10，并在启动器的环境中添加以下变量。Wine 更新容器后，应重新确认兼容模式。
+
+```sh
+export DOTNET_SYSTEM_GLOBALIZATION_USENLS=1
+export WEBVIEW2_BROWSER_EXECUTABLE_FOLDER='C:\Program Files (x86)\Microsoft\EdgeCore\158.0.4370.33'
+export WEBVIEW2_USER_DATA_FOLDER='C:\users\steamuser\AppData\Local\WutheringWavesWebView2'
+export DWPROTON_WEBVIEW2_GDI=1
+export DWPROTON_WEBVIEW2_BROWSER_ARGS='--disable-gpu --disable-gpu-compositing --disable-software-rasterizer --use-gl=disabled --in-process-gpu --disable-features=ForceSWDCompWhenDCompFallbackRequired'
+```
+
 ## 从源码构建
 
 ```sh

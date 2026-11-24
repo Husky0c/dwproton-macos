@@ -82,6 +82,7 @@ static void set_dock_bundle(NSString* name)
     NSURL* url = [directory URLByAppendingPathComponent:[filename stringByAppendingString:@".app"] isDirectory:YES];
     NSURL* contents = [url URLByAppendingPathComponent:@"Contents" isDirectory:YES];
     NSURL* macos = [contents URLByAppendingPathComponent:@"MacOS" isDirectory:YES];
+    if (!macos) return;
     if (![files createDirectoryAtURL:macos withIntermediateDirectories:YES
                           attributes:@{NSFilePosixPermissions: @0700} error:nil]) return;
 

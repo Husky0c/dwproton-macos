@@ -405,7 +405,9 @@ static void get_app_name(struct init_params *params)
             if (VerQueryValueW(version, query, (void **)&name, &len) && len > 1 && *name)
             {
                 params->app_name = (UINT_PTR)name;
-                params->app_name_len = len - 1;
+                /* The resource can declare a length beyond the string terminator. */
+                while (params->app_name_len < len - 1 && name[params->app_name_len])
+                    ++params->app_name_len;
                 return;
             }
         }

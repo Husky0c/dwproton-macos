@@ -107,6 +107,7 @@ typedef struct macdrv_opaque_metal_device* macdrv_metal_device;
 typedef struct macdrv_opaque_metal_view* macdrv_metal_view;
 typedef struct macdrv_opaque_metal_layer* macdrv_metal_layer;
 typedef struct macdrv_opaque_status_item* macdrv_status_item;
+typedef struct macdrv_opaque_remote_child* macdrv_remote_child;
 struct macdrv_event;
 struct macdrv_query;
 
@@ -527,6 +528,13 @@ extern void macdrv_release_metal_device(macdrv_metal_device d);
 extern macdrv_metal_view macdrv_view_create_metal_view(macdrv_view v, macdrv_metal_device d);
 extern macdrv_metal_layer macdrv_view_get_metal_layer(macdrv_metal_view v);
 extern void macdrv_view_release_metal_view(macdrv_metal_view v);
+/* The launcher hosts this layer in its window while WebView2 draws into it. */
+extern bool macdrv_supports_remote_child(void);
+extern macdrv_remote_child macdrv_create_remote_child(unsigned int *context_id);
+extern void macdrv_remote_child_set_image(macdrv_remote_child child, CGImageRef image);
+extern void macdrv_destroy_remote_child(macdrv_remote_child child);
+extern void macdrv_window_set_remote_child_host(macdrv_window w, unsigned int context_id, CGRect frame, int visible);
+extern void macdrv_window_release_ca_layer_host_view(macdrv_window window, unsigned int context_id);
 extern bool macdrv_get_view_backing_size(macdrv_view v, int backing_size[2]);
 extern void macdrv_set_view_backing_size(macdrv_view v, const int backing_size[2]);
 extern uint32_t macdrv_window_background_color(void);

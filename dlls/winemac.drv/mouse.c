@@ -742,14 +742,67 @@ static BOOL get_icon_info(HICON handle, ICONINFOEXW *ret)
 
 
 /***********************************************************************
+ *              set_remote_cursor
+ *
+ * The launcher owns the macOS window, so pass a system cursor index it can resolve locally.
+ * Missing and custom cursors fall back to the arrow.
+ */
+static void set_remote_cursor(HWND remote, HCURSOR cursor)
+{
+    HWND root = NtUserGetAncestor(remote, GA_ROOT);
+    CFStringRef name = NULL;
+    WPARAM index = 1; /* arrowCursor */
+    unsigned int i;
+
+    if (cursor)
+    {
+        ICONINFOEXW info;
+
+        info.cbSize = sizeof(info);
+        if (get_icon_info(cursor, &info))
+        {
+            name = copy_system_cursor_name(&info);
+            NtGdiDeleteObjectApp(info.hbmColor);
+            NtGdiDeleteObjectApp(info.hbmMask);
+        }
+        for (i = 0; name && i < ARRAY_SIZE(cocoa_cursor_names); i++)
+            if (CFEqual(name, cocoa_cursor_names[i])) index = i + 1;
+        if (name) CFRelease(name);
+    }
+    TRACE("remote child %p cursor %p -> %u for %p\n", remote, cursor, (unsigned int)index, root);
+    if (root && root != remote) NtUserPostMessage(root, WM_MACDRV_SET_REMOTE_CURSOR, (WPARAM)remote, index);
+}
+
+
+/***********************************************************************
+ *              macdrv_set_remote_cursor_index
+ *
+ * In the hosting process: show the cursor a remote child asked for (set_remote_cursor).
+ */
+void macdrv_set_remote_cursor_index(WPARAM index)
+{
+    if (index && index <= ARRAY_SIZE(cocoa_cursor_names)) macdrv_set_cursor(cocoa_cursor_names[index - 1], NULL);
+}
+
+
+/***********************************************************************
  *              SetCursor (MACDRV.@)
  */
 void macdrv_SetCursor(HWND hwnd, HCURSOR cursor)
 {
     CFStringRef cursor_name = NULL;
     CFArrayRef cursor_frames = NULL;
+    HWND remote;
 
     TRACE("%p %p\n", hwnd, cursor);
+
+    for (remote = hwnd; macdrv_webview2_gdi_child && remote && remote != NtUserGetDesktopWindow();
+         remote = NtUserGetAncestor(remote, GA_PARENT))
+    {
+        if (!macdrv_is_remote_child(remote)) continue;
+        set_remote_cursor(remote, cursor);
+        return;
+    }
 
     if (cursor)
     {

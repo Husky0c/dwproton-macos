@@ -18,6 +18,7 @@
  * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA
  */
 
+#include <limits.h>
 #include <stdarg.h>
 #include <string.h>
 
@@ -681,6 +682,25 @@ static void sync_env_var_to_unix( WCHAR *env, const char *name )
     } else __wine_set_unix_env( name, NULL );
 }
 
+static BOOL is_webview2_executable( const WCHAR *app_name )
+{
+    const WCHAR *separator;
+
+    if ((separator = wcsrchr( app_name, '/' ))) app_name = separator + 1;
+    if ((separator = wcsrchr( app_name, '\\' ))) app_name = separator + 1;
+    return !_wcsicmp( app_name, L"msedgewebview2.exe" );
+}
+
+static USHORT get_webview2_browser_args( const WCHAR *cmd_line, WCHAR *buffer, USHORT size )
+{
+    UNICODE_STRING name = RTL_CONSTANT_STRING(L"DWPROTON_WEBVIEW2_BROWSER_ARGS");
+    UNICODE_STRING value = {0, size - sizeof(WCHAR), buffer};
+
+    if (wcsstr( cmd_line, L"--type=" )) return 0;
+    if (RtlQueryEnvironmentVariable_U( NULL, &name, &value )) return 0;
+    return value.Length / sizeof(WCHAR);
+}
+
 /**********************************************************************
  *           CreateProcessInternalW   (kernelbase.@)
  */
@@ -702,6 +722,7 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     ULONG nt_flags = 0;
     USHORT machine = 0;
     NTSTATUS status;
+    BOOL webview2;
 
     /* Process the AppName and/or CmdLine to get module name and path */
 
@@ -776,6 +797,39 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
     info->hThread = info->hProcess = 0;
     info->dwProcessId = info->dwThreadId = 0;
 
+    if ((webview2 = is_webview2_executable( app_name )))
+    {
+        WCHAR webview_args[2048];
+        USHORT length;
+
+        /* Append after the host's switches, since Chromium uses the last duplicate. */
+        if ((length = get_webview2_browser_args( tidy_cmdline, webview_args, sizeof(webview_args) )))
+        {
+            SIZE_T offset = lstrlenW( tidy_cmdline );
+            SIZE_T count = offset + length + 2;
+            WCHAR *webview_cmdline;
+
+            if (count > USHRT_MAX / sizeof(WCHAR))
+            {
+                HeapFree( GetProcessHeap(), 0, orig_app_name );
+                status = STATUS_NAME_TOO_LONG;
+                goto done;
+            }
+            if (!(webview_cmdline = HeapAlloc( GetProcessHeap(), 0, count * sizeof(WCHAR) )))
+            {
+                HeapFree( GetProcessHeap(), 0, orig_app_name );
+                status = STATUS_NO_MEMORY;
+                goto done;
+            }
+            memcpy( webview_cmdline, tidy_cmdline, offset * sizeof(WCHAR) );
+            webview_cmdline[offset++] = ' ';
+            memcpy( webview_cmdline + offset, webview_args, length * sizeof(WCHAR) );
+            webview_cmdline[offset + length] = 0;
+            if (tidy_cmdline != cmd_line) HeapFree( GetProcessHeap(), 0, tidy_cmdline );
+            tidy_cmdline = webview_cmdline;
+        }
+    }
+
     if (!(params = create_process_params( app_name, tidy_cmdline, cur_dir, env, flags, startup_info )))
     {
         HeapFree( GetProcessHeap(), 0, orig_app_name );
@@ -794,6 +848,18 @@ BOOL WINAPI DECLSPEC_HOTPATCH CreateProcessInternalW( HANDLE token, const WCHAR 
         memcpy(new_env, params->Environment, params->EnvironmentSize);
 
         RtlDestroyProcessParameters( params );
+
+        /* WebView2 can supply a custom environment that omits the launcher's opt-in. */
+        if (webview2)
+        {
+            WCHAR option[2];
+            UNICODE_STRING gdi = RTL_CONSTANT_STRING(L"DWPROTON_WEBVIEW2_GDI");
+            UNICODE_STRING enabled = {0, sizeof(option), option};
+
+            if (!RtlQueryEnvironmentVariable_U( NULL, &gdi, &enabled ) &&
+                enabled.Length == sizeof(WCHAR) && option[0] == '1')
+                RtlSetEnvironmentVariable( &new_env, &gdi, &enabled );
+        }
 
         if (product_name && !strcmp( product_name, "Easy Anti-Cheat Bootstrapper (EOS)" ))
         {

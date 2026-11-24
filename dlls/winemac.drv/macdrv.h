@@ -42,6 +42,8 @@
 extern BOOL allow_vsync;
 extern BOOL allow_set_gamma;
 extern BOOL allow_software_rendering;
+extern BOOL macdrv_webview2_gdi;
+extern BOOL macdrv_webview2_gdi_child;
 
 extern UINT64 app_icon_callback;
 extern UINT64 app_quit_request_callback;
@@ -95,6 +97,9 @@ enum macdrv_window_messages
 {
     WM_MACDRV_SET_WIN_REGION = WM_WINE_FIRST_DRIVER_MSG,
     WM_MACDRV_ACTIVATE_ON_FOLLOWING_FOCUS,
+    WM_MACDRV_UPDATE_REMOTE_CHILD,
+    WM_MACDRV_REMOVE_REMOTE_CHILD,
+    WM_MACDRV_SET_REMOTE_CURSOR,
 };
 
 struct macdrv_thread_data
@@ -187,6 +192,11 @@ struct macdrv_win_data
     unsigned int        per_pixel_alpha : 1;    /* is window using per-pixel alpha? */
     unsigned int        minimized : 1;          /* is window minimized? */
     unsigned int        fullscreen : 1;         /* is the window visible rect fullscreen? (unrelated to native AppKit/Cocoa fullscreen) */
+    /* Layer exported by an embedded WebView2 window. */
+    macdrv_remote_child remote_child;
+    unsigned int        remote_context_id;
+    HWND                remote_host;            /* the top-level window hosting it */
+
 };
 
 struct macdrv_client_surface
@@ -206,6 +216,9 @@ extern struct macdrv_client_surface *macdrv_client_surface_create(HWND hwnd);
 
 extern struct macdrv_win_data *get_win_data(HWND hwnd);
 extern void release_win_data(struct macdrv_win_data *data);
+extern BOOL macdrv_is_remote_child(HWND hwnd);
+extern BOOL macdrv_ensure_remote_child(struct macdrv_win_data *data);
+extern void macdrv_set_remote_cursor_index(WPARAM index);
 extern void init_win_context(void);
 extern macdrv_window macdrv_get_cocoa_window(HWND hwnd, BOOL require_on_screen);
 extern RGNDATA *get_region_data(HRGN hrgn, HDC hdc_lptodp);

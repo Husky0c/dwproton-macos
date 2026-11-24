@@ -34,6 +34,7 @@
 #include "macdrv.h"
 #include "shellapi.h"
 #include "wine/server.h"
+#include "wine/dwproton_webview2.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(macdrv);
 
@@ -51,6 +52,8 @@ bool right_option_is_alt = false;
 bool left_command_is_ctrl = false;
 bool right_command_is_ctrl = false;
 BOOL allow_software_rendering = FALSE;
+BOOL macdrv_webview2_gdi;
+BOOL macdrv_webview2_gdi_child;
 bool allow_immovable_windows = true;
 bool use_confinement_cursor_clipping = true;
 bool cursor_clipping_locks_windows = true;
@@ -282,6 +285,10 @@ static void setup_options(void)
     WCHAR buffer[MAX_PATH + 16], *p, *appname;
     HKEY hkey, appkey = 0;
     DWORD len;
+
+    macdrv_webview2_gdi = dwproton_webview2_gdi_enabled() && macdrv_supports_remote_child();
+    macdrv_webview2_gdi_child = macdrv_webview2_gdi && dwproton_is_webview2_process();
+    TRACE("WebView2 GDI %d, browser process %d\n", macdrv_webview2_gdi, macdrv_webview2_gdi_child);
 
     /* @@ Wine registry key: HKCU\Software\Wine\Mac Driver */
     hkey = open_hkcu_key("Software\\Wine\\Mac Driver");
