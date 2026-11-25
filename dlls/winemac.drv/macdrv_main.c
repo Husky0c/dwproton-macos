@@ -54,6 +54,7 @@ bool right_command_is_ctrl = false;
 BOOL allow_software_rendering = FALSE;
 BOOL macdrv_webview2_gdi;
 BOOL macdrv_webview2_gdi_child;
+BOOL macdrv_layered_children;
 bool allow_immovable_windows = true;
 bool use_confinement_cursor_clipping = true;
 bool cursor_clipping_locks_windows = true;
@@ -286,7 +287,8 @@ static void setup_options(void)
     HKEY hkey, appkey = 0;
     DWORD len;
 
-    macdrv_webview2_gdi = dwproton_webview2_gdi_enabled() && macdrv_supports_remote_child();
+    macdrv_layered_children = macdrv_supports_remote_child();
+    macdrv_webview2_gdi = dwproton_webview2_gdi_enabled() && macdrv_layered_children;
     macdrv_webview2_gdi_child = macdrv_webview2_gdi && dwproton_is_webview2_process();
     TRACE("WebView2 GDI %d, browser process %d\n", macdrv_webview2_gdi, macdrv_webview2_gdi_child);
 

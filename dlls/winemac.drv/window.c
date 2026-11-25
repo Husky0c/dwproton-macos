@@ -523,18 +523,20 @@ static void destroy_cocoa_window(struct macdrv_win_data *data)
 /***********************************************************************
  *              macdrv_is_remote_child
  *
- * An opted-in WebView2 window can draw into a remote layer when its parent belongs to the launcher.
+ * Give layered children their own drawable layer. Embedded WebView2 windows
+ * also need a layer when their parent belongs to the launcher.
  */
 BOOL macdrv_is_remote_child(HWND hwnd)
 {
     HWND parent;
     DWORD pid = 0;
 
-    if (!macdrv_webview2_gdi_child) return FALSE;
     parent = NtUserGetAncestor(hwnd, GA_PARENT);
     if (!parent || parent == NtUserGetDesktopWindow()) return FALSE;
     if (!NtUserGetWindowThread(parent, &pid)) return FALSE;
-    return pid && pid != GetCurrentProcessId();
+    if (pid == GetCurrentProcessId())
+        return macdrv_layered_children && (NtUserGetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED);
+    return pid && macdrv_webview2_gdi_child;
 }
 
 static BOOL is_remote_host_window(HWND host, HWND child)
@@ -543,6 +545,16 @@ static BOOL is_remote_host_window(HWND host, HWND child)
 
     return macdrv_webview2_gdi && child && host != child && NtUserGetAncestor(child, GA_ROOT) == host &&
            NtUserGetWindowThread(child, &process) && process != GetCurrentProcessId();
+}
+
+static BOOL is_child_layer_host(HWND host, HWND child)
+{
+    DWORD process;
+
+    if (is_remote_host_window(host, child)) return TRUE;
+    return macdrv_layered_children && child && host != child && NtUserGetAncestor(child, GA_ROOT) == host &&
+           NtUserGetWindowThread(child, &process) && process == GetCurrentProcessId() &&
+           macdrv_is_remote_child(child);
 }
 
 /* tell the top-level window's process where to show the remote layer, and that it changed */
@@ -1596,7 +1608,7 @@ LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         TRACE("WM_MACDRV_ACTIVATE_ON_FOLLOWING_FOCUS time %u\n", activate_on_focus_time);
         return 0;
     case WM_MACDRV_UPDATE_REMOTE_CHILD:
-        if (lp && is_remote_host_window(hwnd, (HWND)wp) && (data = get_win_data(hwnd)))
+        if (lp && is_child_layer_host(hwnd, (HWND)wp) && (data = get_win_data(hwnd)))
         {
             HWND child = (HWND)wp;
             RECT rect;
@@ -1617,7 +1629,7 @@ LRESULT macdrv_WindowMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         if (is_remote_host_window(hwnd, (HWND)wp)) macdrv_set_remote_cursor_index(lp);
         return 0;
     case WM_MACDRV_REMOVE_REMOTE_CHILD:
-        if (macdrv_webview2_gdi && (data = get_win_data(hwnd)))
+        if ((macdrv_webview2_gdi || macdrv_layered_children) && (data = get_win_data(hwnd)))
         {
             if (data->cocoa_window) macdrv_window_release_ca_layer_host_view(data->cocoa_window, (unsigned int)lp);
             release_win_data(data);

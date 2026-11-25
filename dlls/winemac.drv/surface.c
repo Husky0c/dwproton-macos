@@ -113,7 +113,7 @@ static BOOL macdrv_surface_flush(struct window_surface *window_surface, const RE
                         memcpy(dst + y * row_size, (const BYTE *)color_bits + y * src_stride, row_size);
                     colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
                     image = CGImageCreate(width, height, 8, 32, row_size, colorspace,
-                                          kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little, provider, NULL,
+                                          alpha_info | kCGBitmapByteOrder32Little, provider, NULL,
                                           retina_on, kCGRenderingIntentDefault);
                     CGColorSpaceRelease(colorspace);
                     CGDataProviderRelease(provider);

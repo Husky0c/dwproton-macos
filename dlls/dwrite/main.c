@@ -1551,6 +1551,18 @@ static HKEY open_fonts_key(void)
     return hkey;
 }
 
+static WCHAR *get_external_font_path(const WCHAR *name)
+{
+    WCHAR path[MAX_PATH];
+    DWORD size = sizeof(path);
+
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Wine\\Fonts\\External Fonts", name,
+            RRF_RT_REG_SZ, NULL, path, &size) || GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+        return NULL;
+
+    return wcsdup(path);
+}
+
 static HRESULT create_system_path_list(WCHAR ***ret, unsigned int *ret_count)
 {
     unsigned int index = 0, value_size, max_name_count;
@@ -1617,6 +1629,18 @@ static HRESULT create_system_path_list(WCHAR ***ret, unsigned int *ret_count)
                     GetWindowsDirectoryW(ptrW, MAX_PATH);
                     wcscat(ptrW, L"\\fonts\\");
                     wcscat(ptrW, value);
+
+                    /* A prefix update can replace an external font's path with a built-in filename. */
+                    if (GetFileAttributesW(ptrW) == INVALID_FILE_ATTRIBUTES)
+                    {
+                        WCHAR *external = get_external_font_path(name);
+
+                        if (external)
+                        {
+                            free(ptrW);
+                            ptrW = external;
+                        }
+                    }
 
                     free(value);
                     value = ptrW;

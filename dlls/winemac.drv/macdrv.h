@@ -44,6 +44,7 @@ extern BOOL allow_set_gamma;
 extern BOOL allow_software_rendering;
 extern BOOL macdrv_webview2_gdi;
 extern BOOL macdrv_webview2_gdi_child;
+extern BOOL macdrv_layered_children;
 
 extern UINT64 app_icon_callback;
 extern UINT64 app_quit_request_callback;

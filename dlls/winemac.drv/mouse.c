@@ -827,8 +827,10 @@ void macdrv_SetCursor(HWND hwnd, HCURSOR cursor)
         info.cbSize = sizeof(info);
         if (!get_icon_info(cursor, &info))
         {
-            WARN("GetIconInfoExW failed\n");
-            return;
+            /* An embedded window can supply a cursor owned by another process. */
+            WARN("GetIconInfoExW failed for %p, using the system arrow\n", cursor);
+            cursor_name = CFRetain(CFSTR("arrowCursor"));
+            goto done;
         }
 
         if ((cursor_name = copy_system_cursor_name(&info)))

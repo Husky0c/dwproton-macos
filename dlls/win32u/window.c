@@ -2084,7 +2084,7 @@ static BOOL get_surface_rect( const RECT *visible_rect, RECT *surface_rect )
     return TRUE;
 }
 
-static BOOL get_default_window_surface( HWND hwnd, const RECT *surface_rect, BOOL remote_child,
+static BOOL get_default_window_surface( HWND hwnd, const RECT *surface_rect, BOOL child_surface,
                                         struct window_surface **surface )
 {
     struct window_surface *previous;
@@ -2099,7 +2099,7 @@ static BOOL get_default_window_surface( HWND hwnd, const RECT *surface_rect, BOO
         window_surface_add_ref( (*surface = previous) );
         TRACE( "trying to reuse previous surface %p\n", previous );
     }
-    else if (!win->parent || win->parent == get_desktop_window() || remote_child)
+    else if (!win->parent || win->parent == get_desktop_window() || child_surface)
     {
         *surface = &dummy_surface;  /* provide a default surface for top-level windows */
         window_surface_add_ref( *surface );
@@ -2134,7 +2134,7 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
                                                   struct window_rects *rects, RECT *surface_rect )
 {
     BOOL shaped, needs_surface, create_opaque, is_layered, is_child, driver_surface;
-    BOOL remote_child = FALSE;
+    BOOL child_surface = FALSE;
     HWND parent = NtUserGetAncestor( hwnd, GA_PARENT );
     struct window_surface *new_surface;
     struct window_rects monitor_rects;
@@ -2159,13 +2159,16 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
 
     driver_surface = user_driver->pWindowPosChanging( hwnd, swp_flags, shaped, &monitor_rects );
 #ifdef __APPLE__
-    if (is_child && driver_surface && webview2_gdi_child)
+    /* winemac can composite a layered child independently of its parent's surface. */
+    if (is_child && driver_surface)
     {
         DWORD parent_process;
-        remote_child = get_window_thread( parent, &parent_process ) && parent_process != GetCurrentProcessId();
+
+        if (get_window_thread( parent, &parent_process ))
+            child_surface = parent_process == GetCurrentProcessId() ? !!(ex_style & WS_EX_LAYERED) : webview2_gdi_child;
     }
 #endif
-    if (!driver_surface || (is_child && !remote_child)) needs_surface = FALSE;
+    if (!driver_surface || (is_child && !child_surface)) needs_surface = FALSE;
     else if (swp_flags & SWP_HIDEWINDOW) needs_surface = FALSE;
     else if (swp_flags & SWP_SHOWWINDOW) needs_surface = TRUE;
     else needs_surface = !!(style & WS_VISIBLE);
@@ -2173,7 +2176,7 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
     if (!is_child) rects->visible = get_visible_rect( hwnd, shaped, style, ex_style, rects );
     if (!get_surface_rect( &rects->visible, surface_rect )) needs_surface = FALSE;
 #ifdef __APPLE__
-    if (is_child && !remote_child && !(swp_flags & SWP_HIDEWINDOW) && ((swp_flags & SWP_SHOWWINDOW) || (style & WS_VISIBLE)))
+    if (is_child && !child_surface && !(swp_flags & SWP_HIDEWINDOW) && ((swp_flags & SWP_SHOWWINDOW) || (style & WS_VISIBLE)))
     {
         DWORD parent_process;
 
@@ -2186,7 +2189,7 @@ static struct window_surface *get_window_surface( HWND hwnd, UINT swp_flags, BOO
         }
     }
 #endif
-    if (!get_default_window_surface( hwnd, surface_rect, remote_child, &new_surface )) return NULL;
+    if (!get_default_window_surface( hwnd, surface_rect, child_surface, &new_surface )) return NULL;
 
     is_layered = new_surface && new_surface->alpha_mask;
     create_opaque = !(get_window_long( hwnd, GWL_EXSTYLE ) & WS_EX_LAYERED);

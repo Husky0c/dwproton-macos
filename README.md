@@ -10,22 +10,24 @@ DWProton macOS 是面向 Intel macOS 的 Wine 运行时，基于 DWProton 11.0-1
 
 ## 安装
 
-1. 下载 `dwproton-macos-11.0-17.1-x86_64.tar.gz` 和 `SHA256SUMS`。[下载预览版](https://github.com/Husky0c/dwproton-macos/releases/tag/v11.0-17-macos.1)
+1. 下载 `dwproton-x64-macos-11.0.2.tar.gz` 和 `SHA256SUMS`。[下载 11.0.2](https://github.com/Husky0c/dwproton-macos/releases/tag/v11.0.2) · [版本说明](CHANGELOG.md)
 2. 在下载目录校验并解压。
 
    ```sh
    shasum -a 256 -c --ignore-missing SHA256SUMS &&
-     tar -xzf dwproton-macos-11.0-17.1-x86_64.tar.gz
+     tar -xzf dwproton-x64-macos-11.0.2.tar.gz
    ```
 
-3. 将解压得到的 `DWProton-macOS-x64.app` 放入 `~/Library/Application Support/heroic/tools/wine/`。
-4. 重启 Heroic，在游戏设置的 Wine 版本中选择 **DWProton macOS x64 - 11.0**。
+3. 将解压得到的 `dwproton-x64-macos-11.0.2.app` 放入 `~/Library/Application Support/heroic/tools/wine/`。
+4. 重启 Heroic，在游戏设置的 Wine 版本中选择 **DWProton macOS x64 - 11.0.2**。
 
 安装后可从终端检查运行时版本。
 
 ```sh
-"$HOME/Library/Application Support/heroic/tools/wine/DWProton-macOS-x64.app/Contents/Resources/wine/bin/wine" --version
+"$HOME/Library/Application Support/heroic/tools/wine/dwproton-x64-macos-11.0.2.app/Contents/Resources/wine/bin/wine" --version
 ```
+
+Heroic 显示 macOS 发行版本 `11.0.2`，`wine --version` 显示上游 Wine 版本 `11.0`。
 
 ## 兼容性
 
